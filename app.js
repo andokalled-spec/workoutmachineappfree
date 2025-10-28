@@ -38,9 +38,6 @@ class VitruvianApp {
     this.resetRepCountersToEmpty();
     this.updateStopButtonState();
 
-// plan advance debounce/guard
-this.planAwaitingAdvance = false;
-
 // PLAN state
 this.planItems = [];
 this.planActive = false;
@@ -1283,29 +1280,7 @@ this.addLogEntry("Plan: completeWorkout() fired", "info");
     }
  
 
-// ---- Plan advance hook (guarded) ----
-try {
-  // Advance only if a plan is running, we're NOT in a rest window,
-  // and we haven't already queued an advance for this completion.
-  if (this.planActive && !this.restActive && typeof this.planOnWorkoutComplete === "function") {
-    if (!this.planAwaitingAdvance) {
-      this.planAwaitingAdvance = true;
-      // Let UI/state settle, then advance exactly once.
-      setTimeout(() => {
-        try {
-          this.planOnWorkoutComplete();
-        } catch (e) {
-          console.error("[PLAN] planOnWorkoutComplete threw:", e);
-          this.addLogEntry(`Plan advance error: ${e?.message || e}`, "warning");
-        } finally {
-          this.planAwaitingAdvance = false;
-        }
-      }, 0);
-    }
-  }
-} catch (e) {
-  console.error(e);
-}
+try { this.planOnWorkoutComplete && this.planOnWorkoutComplete(); } catch {}
  }
 
   // Get dynamic window size based on workout phase
@@ -1707,9 +1682,7 @@ try {
       this.addLogEntry("Workout stopped by user", "info");
 
       // Complete the workout and save to history
-    //  this.completeWorkout(); 
-      
-
+      this.completeWorkout();
     } catch (error) {
       console.error("Stop workout error:", error);
       this.addLogEntry(`Failed to stop workout: ${error.message}`, "error");
