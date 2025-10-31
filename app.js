@@ -37,79 +37,21 @@ class VitruvianApp {
     this.setupUnitControls();
     this.resetRepCountersToEmpty();
     this.updateStopButtonState();
+	
+    this.planItems = [];        // array of {type: 'exercise'|'echo', fields...}
+    this.planActive = false;    // true when plan runner is active
+    this.planCursor = { index: 0, set: 1 }; // current item & set counter
+    this.planRestTimer = null;  // rest countdown handle
+    this.planOnWorkoutComplete = null; // hook assigned while plan is running
 
-// PLAN state
-this.planItems = [];
-this.planActive = false;
-this.planCursor = { index: 0, set: 1 };
-this.planRestTimer = null;
-this.planOnWorkoutComplete = null;
+    // initialize plan UI dropdown from storage
+    setTimeout(() => {
+      this.populatePlanSelect();
+      this.renderPlanUI();
+    }, 0);
 
-// REST overlay state
-this.restActive = false;
-this.restDuration = 0;
-this.restEndTs = 0;
-this.restPaused = false;
-this.restRemaining = 0;
-this.restRAF = null;
-this.restOnDone = null;
-
-// Beep / audio
-this.audioCtx = null;
-this.beeped = {1:false,2:false,3:false};
-
-// Initialize plan UI + overlay buttons once DOM is ready
-setTimeout(() => {
-  this.populatePlanSelect?.();
-  this.renderPlanUI?.();
-  const skip  = document.getElementById("restSkipBtn");
-  const add   = document.getElementById("restAddBtn");
-  const pause = document.getElementById("restPauseBtn");
-  skip  && (skip.onclick  = () => this._restSkip());
-  add   && (add.onclick   = () => this._restAdd(30));
-  pause && (pause.onclick = () => this._restTogglePause());
-}, 0);
 
   }
-
-
-	getProgramModeLabel(v) {
-  const map = {
-    [ProgramMode.OLD_SCHOOL]: "Old School",
-    [ProgramMode.PUMP]: "Pump",
-    [ProgramMode.TUT]: "TUT",
-    [ProgramMode.TUT_BEAST]: "TUT Beast",
-    [ProgramMode.ECCENTRIC_ONLY]: "Eccentric Only",
-  };
-  return map[v] ?? `Mode ${v}`;
-}
-getEchoLevelLabel(v) {
-  const map = {
-    [EchoLevel.HARD]: "Hard",
-    [EchoLevel.HARDER]: "Harder",
-    [EchoLevel.HARDEST]: "Hardest",
-    [EchoLevel.EPIC]: "Epic",
-  };
-  return map[v] ?? `Level ${v}`;
-}
-getUnitLabelShort() { return this.getUnitLabel(); }
-_fmtSec(s) {
-  s = Math.max(0, Math.ceil(s));
-  const m = Math.floor(s/60), ss = String(s%60).padStart(2, "0");
-  return m ? `${m}:${ss}` : `${ss}s`;
-}
-async _beep(freq=880, durMs=120, gain=0.08) {
-  try {
-    if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (this.audioCtx.state === "suspended") await this.audioCtx.resume();
-    const ctx = this.audioCtx, o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = "sine"; o.frequency.value = freq; g.gain.value = gain;
-    o.connect(g); g.connect(ctx.destination);
-    const now = ctx.currentTime; o.start(now); o.stop(now + durMs/1000);
-  } catch {}
-}
-
-
 
   setupLogging() {
     // Connect device logging to UI
@@ -221,9 +163,7 @@ async _beep(freq=880, durMs=120, gain=0.08) {
     this.renderLoadDisplays(this.currentSample);
     this.updateHistoryDisplay();
     this.applyUnitToChart();
-  
-try { this.renderPlanUI && this.renderPlanUI(); } catch {}
-}
+  }
 
   getUnitLabel() {
     return this.weightUnit === "lb" ? "lb" : "kg";
@@ -509,6 +449,10 @@ try { this.renderPlanUI && this.renderPlanUI(); } catch {}
     this.chartManager.setTimeRange(seconds);
   }
 
+
+
+
+
   exportData() {
     this.chartManager.exportCSV();
   }
@@ -548,467 +492,6 @@ try { this.renderPlanUI && this.renderPlanUI(); } catch {}
       modeLabel.textContent = "Workout Mode:";
     }
   }
-
-
-makeExerciseRow() {
-  return {
-    type: "exercise",
-    title: "",  
-    name: "Untitled Exercise",
-    mode: ProgramMode.OLD_SCHOOL,
-    perCableKg: 10,
-    reps: 10,
-    sets: 3,
-    restSec: 60,
-    cables: 2,
-    justLift: false,
-    stopAtTop: false,
-    progressionKg: 0,
-  };
-}
-makeEchoRow() {
-  return {
-    type: "echo",
-    title: "",  
-    name: "Echo Block",
-    level: EchoLevel.HARD,
-    eccentricPct: 100,
-    targetReps: 2,
-    sets: 3,
-    restSec: 60,
-    justLift: false,
-    stopAtTop: false,
-  };
-}
-
-renderPlanUI() {
-  const container = document.getElementById("planItems");
-  if (!container) return;
-  const unit = this.getUnitLabelShort();
-
-  const makeRow = (item, i) => {
-    const card = document.createElement("div");
-    card.style.background = "#f8f9fa";
-    card.style.padding = "12px";
-    card.style.borderRadius = "8px";
-    card.style.borderLeft = "4px solid #667eea";
-
-    const header = document.createElement("div");
-    header.style.display = "flex";
-    header.style.justifyContent = "space-between";
-    header.style.alignItems = "center";
-    header.style.marginBottom = "10px";
-    header.innerHTML = `
-      <div style="font-weight:700; color:#212529">
-    ${item.title && item.title.trim() !== "" 
-       ? item.title 
-       : (item.type === "exercise" ? "Exercise" : "Echo Mode")}
-  </div>
-      <div style="display:flex; gap:8px;">
-        <button class="secondary" style="width:auto; padding:6px 10px;" onclick="app.movePlanItem(${i}, -1)">Move Up</button>
-        <button class="secondary" style="width:auto; padding:6px 10px;" onclick="app.movePlanItem(${i}, 1)">Move Down</button>
-        <button class="secondary" style="width:auto; padding:6px 10px; background:#dc3545" onclick="app.removePlanItem(${i})">Delete</button>
-      </div>`;
-    card.appendChild(header);
-
-    const grid = document.createElement("div");
-    grid.style.display = "grid";
-    grid.style.gridTemplateColumns = "1fr 1fr";
-    grid.style.gap = "10px";
-
-const commonHtml = `
-  <div class="form-group">
-    <label>Title</label>
-    <input type="text" placeholder="Exercise title (e.g. Bench Press)" 
-           value="${item.title || ""}" 
-           oninput="app.updatePlanField(${i}, 'title', this.value)" />
-  </div>
-
-  <div class="form-group">
-    <label>Name</label>
-    <input type="text" placeholder="Short name (e.g. Warmup 1)" 
-           value="${item.name || ""}" 
-           oninput="app.updatePlanField(${i}, 'name', this.value)" />
-  </div>
-      <div class="form-group">
-        <label>Sets</label>
-        <input type="number" min="1" max="99" value="${item.sets}" oninput="app.updatePlanField(${i}, 'sets', parseInt(this.value)||1)" />
-      </div>
-      <div class="form-group">
-        <label>Rest (sec)</label>
-        <input type="number" min="0" max="600" value="${item.restSec}" oninput="app.updatePlanField(${i}, 'restSec', parseInt(this.value)||0)" />
-      </div>
-      <div class="form-group" style="align-self:center">
-        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-          <input type="checkbox" ${item.justLift ? "checked" : ""} onchange="app.updatePlanField(${i}, 'justLift', this.checked)" style="width:auto;" />
-          <span>Just lift mode</span>
-        </label>
-        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:6px;">
-          <input type="checkbox" ${item.stopAtTop ? "checked" : ""} onchange="app.updatePlanField(${i}, 'stopAtTop', this.checked)" style="width:auto;" />
-          <span>Stop at Top of final rep</span>
-        </label>
-      </div>`;
-
-    if (item.type === "exercise") {
-      const modeOptions = [
-        [ProgramMode.OLD_SCHOOL, "Old School"],
-        [ProgramMode.PUMP, "Pump"],
-        [ProgramMode.TUT, "TUT"],
-        [ProgramMode.TUT_BEAST, "TUT Beast"],
-        [ProgramMode.ECCENTRIC_ONLY, "Eccentric Only"],
-      ].map(([v, l]) => `<option value="${v}" ${item.mode===v?"selected":""}>${l}</option>`).join("");
-
-      grid.innerHTML = `
-        <div class="form-group">
-          <label>Mode</label>
-          <select onchange="app.updatePlanField(${i}, 'mode', parseInt(this.value))">${modeOptions}</select>
-        </div>
-        <div class="form-group">
-          <label>Weight per cable (${unit})</label>
-          <input type="number" min="0" max="1000" step="${unit==='lb' ? 1 : 0.5}"
-                 value="${this.convertKgToDisplay(item.perCableKg).toFixed(this.getWeightInputDecimals())}"
-                 oninput="app.updatePlanPerCableDisplay(${i}, this.value)" />
-        </div>
-        <div class="form-group">
-          <label>Reps</label>
-          <input type="number" min="0" max="100" value="${item.reps}" oninput="app.updatePlanField(${i}, 'reps', parseInt(this.value)||0)" />
-        </div>
-        <div class="form-group">
-          <label>Cables</label>
-          <input type="number" min="1" max="2" value="${item.cables}" oninput="app.updatePlanField(${i}, 'cables', Math.min(2, Math.max(1, parseInt(this.value)||1)))" />
-        </div>
-        <div class="form-group">
-          <label>Progression (${unit} per rep)</label>
-          <input type="number"
-                 step="${unit==='lb' ? 0.2 : 0.1}"
-                 min="${this.convertKgToDisplay(-3)}"
-                 max="${this.convertKgToDisplay(3)}"
-                 value="${this.convertKgToDisplay(item.progressionKg).toFixed(this.getProgressionInputDecimals())}"
-                 oninput="app.updatePlanProgressionDisplay(${i}, this.value)" />
-        </div>
-        ${commonHtml}`;
-    } else {
-      const levelOptions = [
-        [EchoLevel.HARD, "Hard"],
-        [EchoLevel.HARDER, "Harder"],
-        [EchoLevel.HARDEST, "Hardest"],
-        [EchoLevel.EPIC, "Epic"],
-      ].map(([v, l]) => `<option value="${v}" ${item.level===v?"selected":""}>${l}</option>`).join("");
-
-      grid.innerHTML = `
-        <div class="form-group">
-          <label>Level</label>
-          <select onchange="app.updatePlanField(${i}, 'level', parseInt(this.value))">${levelOptions}</select>
-        </div>
-        <div class="form-group">
-          <label>Eccentric %</label>
-          <input type="number" min="0" max="150" step="5" value="${item.eccentricPct}" oninput="app.updatePlanField(${i}, 'eccentricPct', parseInt(this.value)||0)" />
-        </div>
-        <div class="form-group">
-          <label>Target Reps</label>
-          <input type="number" min="0" max="30" value="${item.targetReps}" oninput="app.updatePlanField(${i}, 'targetReps', parseInt(this.value)||0)" />
-        </div>
-        ${commonHtml}`;
-    }
-
-    card.appendChild(grid);
-    return card;
-  };
-
-  container.innerHTML = "";
-  if (this.planItems.length === 0) {
-    const empty = document.createElement("div");
-    empty.style.color = "#6c757d";
-    empty.style.fontSize = "0.9em";
-    empty.style.textAlign = "center";
-    empty.style.padding = "10px";
-    empty.textContent = "No items yet — add an Exercise or Echo Mode.";
-    container.appendChild(empty);
-  } else {
-    this.planItems.forEach((it, idx) => container.appendChild(makeRow(it, idx)));
-  }
-}
-
-// UI actions + persistence
-addPlanExercise(){ this.planItems.push(this.makeExerciseRow()); this.renderPlanUI(); }
-addPlanEcho(){ this.planItems.push(this.makeEchoRow()); this.renderPlanUI(); }
-resetPlanToDefaults(){
-  this.planItems = [
-    { ...this.makeExerciseRow(), name: "Back Squat", mode: ProgramMode.OLD_SCHOOL, perCableKg: 15, reps: 8, sets: 3, restSec: 90, stopAtTop: true },
-    { ...this.makeEchoRow(),    name: "Echo Finishers", level: EchoLevel.HARDER, eccentricPct: 120, targetReps: 2, sets: 2, restSec: 60 },
-  ];
-  this.renderPlanUI();
-}
-removePlanItem(i){ this.planItems.splice(i,1); this.renderPlanUI(); }
-movePlanItem(i, d){
-  const j = i + d; if (j < 0 || j >= this.planItems.length) return;
-  const [row] = this.planItems.splice(i,1); this.planItems.splice(j,0,row); this.renderPlanUI();
-}
-updatePlanField(i, k, v){ const it = this.planItems[i]; if (!it) return; it[k]=v; }
-updatePlanPerCableDisplay(i, disp){
-  const kg = this.convertDisplayToKg(parseFloat(disp)); if (isNaN(kg)) return;
-  this.planItems[i].perCableKg = Math.max(0, kg);
-}
-updatePlanProgressionDisplay(i, disp){
-  const kg = this.convertDisplayToKg(parseFloat(disp)); if (isNaN(kg)) return;
-  this.planItems[i].progressionKg = Math.max(-3, Math.min(3, kg));
-}
-plansKey(){ return "vitruvian.plans.index"; }
-planKey(name){ return `vitruvian.plan.${name}`; }
-getAllPlanNames(){ try{ const raw = localStorage.getItem(this.plansKey()); return raw ? JSON.parse(raw):[]; } catch { return []; } }
-setAllPlanNames(arr){ try{ localStorage.setItem(this.plansKey(), JSON.stringify(arr)); } catch{} }
-populatePlanSelect(){
-  const sel = document.getElementById("planSelect"); if (!sel) return;
-  const names = this.getAllPlanNames();
-  sel.innerHTML = names.length ? names.map(n=>`<option value="${n}">${n}</option>`).join("") : `<option value="">(no saved plans)</option>`;
-}
-saveCurrentPlan(){
-  const nameInput = document.getElementById("planNameInput");
-  const name = (nameInput?.value || "").trim(); if (!name){ alert("Enter a plan name first."); return; }
-  try{
-    localStorage.setItem(this.planKey(name), JSON.stringify(this.planItems));
-    const names = new Set(this.getAllPlanNames()); names.add(name); this.setAllPlanNames([...names]);
-    this.populatePlanSelect(); this.addLogEntry(`Saved plan "${name}" (${this.planItems.length} items)`, "success");
-  }catch(e){ alert(`Could not save plan: ${e.message}`); }
-}
-loadSelectedPlan(){
-  const sel = document.getElementById("planSelect"); if (!sel || !sel.value){ alert("No saved plan selected."); return; }
-  try{
-    const raw = localStorage.getItem(this.planKey(sel.value)); if (!raw){ alert("Saved plan not found."); return; }
-    this.planItems = JSON.parse(raw)||[]; this.renderPlanUI(); this.addLogEntry(`Loaded plan "${sel.value}"`, "success");
-  }catch(e){ alert(`Could not load plan: ${e.message}`); }
-}
-deleteSelectedPlan(){
-  const sel = document.getElementById("planSelect"); if (!sel || !sel.value){ alert("No saved plan selected."); return; }
-  const name = sel.value;
-  try{
-    localStorage.removeItem(this.planKey(name));
-    this.setAllPlanNames(this.getAllPlanNames().filter(n=>n!==name));
-    this.populatePlanSelect(); this.addLogEntry(`Deleted plan "${name}"`, "info");
-  }catch(e){ alert(`Could not delete plan: ${e.message}`); }
-}
-
-
-
-startPlan(){
-  if (!this.device?.isConnected){ alert("Connect to the device before starting a plan."); return; }
-  if (!this.planItems.length){ alert("Add at least one item to your plan."); return; }
-  this.planActive = true; this.planCursor = { index:0, set:1 };
-  this.addLogEntry(`Starting plan with ${this.planItems.length} item(s)`, "success");
-  // When a Program/Echo block completes, continue
-  this.planOnWorkoutComplete = () => this._planAdvance();
-  this._runCurrentPlanBlock();
-}
-
-_runCurrentPlanBlock(){
-
-const current = this.planItems[this.planCursor.index];
-this.addLogEntry(
-  `Starting ${current?.type ?? "block"} — set ${this.planCursor.set}/${current?.sets ?? "?"}`,
-  "info"
-);
-  const { index, set } = this.planCursor;
-  const item = this.planItems[index];
-  if (!item){ this._planFinish(); return; }
-
-  this.addLogEntry(`Plan item ${index+1}/${this.planItems.length}, set ${set}/${item.sets}: ${item.name}`, "info");
-
-  // Apply per-item Stop-at-top without permanently changing global
-  const originalStopAtTop = this.stopAtTop;
-  this.stopAtTop = !!item.stopAtTop;
-  const stopAtTopCheckbox = document.getElementById("stopAtTopCheckbox");
-  if (stopAtTopCheckbox) stopAtTopCheckbox.checked = this.stopAtTop;
-
-  if (item.type === "exercise"){
-    // hydrate Program UI then start
-    const modeSelect = document.getElementById("mode");
-    const weightInput = document.getElementById("weight");
-    const repsInput = document.getElementById("reps");
-    const progInput = document.getElementById("progression");
-    const jl = document.getElementById("justLiftCheckbox");
-    if (modeSelect) modeSelect.value = String(item.mode);
-    if (weightInput) weightInput.value = this.formatWeightValue(item.perCableKg);
-    if (repsInput) repsInput.value = String(item.reps);
-    if (progInput) progInput.value = this.formatWeightValue(item.progressionKg, this.getProgressionInputDecimals());
-    if (jl) { jl.checked = !!item.justLift; this.toggleJustLiftMode(); }
-    this.startProgram().finally(()=>{ this.stopAtTop = originalStopAtTop; });
-  } else {
-    // hydrate Echo UI then start
-    const levelSelect = document.getElementById("echoLevel");
-    const ecc = document.getElementById("eccentric");
-    const target = document.getElementById("targetReps");
-    const jl = document.getElementById("echoJustLiftCheckbox");
-    if (levelSelect) levelSelect.value = String(item.level + 1); // UI 1..4
-    if (ecc) ecc.value = String(item.eccentricPct);
-    if (target) target.value = String(item.targetReps);
-    if (jl) { jl.checked = !!item.justLift; this.toggleEchoJustLiftMode(); }
-    this.startEcho();
-  }
-}
-
-_planAdvance(){
-this.addLogEntry(
-  `Plan advancing → item ${this.planCursor.index + 1}, set ${this.planCursor.set}`,
-  "info"
-);
- if (!this.planActive) return;
-  const item = this.planItems[this.planCursor.index];
-  if (!item){ this._planFinish(); return; }
-
-  // More sets for the same item
-  if (this.planCursor.set < item.sets){
-    this.planCursor.set += 1;
-    const unit = this.getUnitLabel();
-    let nextHtml = "";
-    if (item.type === "exercise"){
-      const w = this.convertKgToDisplay(item.perCableKg).toFixed(this.getWeightInputDecimals());
-      const mode = this.getProgramModeLabel(item.mode);
-      nextHtml = `${mode} • ${w} ${unit}/cable × ${item.cables} • ${item.reps} reps`;
-    } else {
-      const lvl = this.getEchoLevelLabel(item.level);
-      nextHtml = `${lvl} • ecc ${item.eccentricPct}% • target ${item.targetReps} reps`;
-    }
-this.addLogEntry(
-  `Rest ${item.restSec}s → then next set/item (_runCurrentPlanBlock)`,
-  "info"
-);
-this._beginRest(item.restSec, () => this._runCurrentPlanBlock(), `Next set (${this.planCursor.set}/${item.sets})`, nextHtml);
-    return;
-  }
-
-  // Next item
-  this.planCursor.index += 1;
-  this.planCursor.set = 1;
-
-  if (this.planCursor.index >= this.planItems.length){
-    this._planFinish();
-  } else {
-    const nextItem = this.planItems[this.planCursor.index];
-    const unit = this.getUnitLabel();
-    let nextHtml = "";
-    if (nextItem?.type === "exercise"){
-      const w = this.convertKgToDisplay(nextItem.perCableKg).toFixed(this.getWeightInputDecimals());
-      const mode = this.getProgramModeLabel(nextItem.mode);
-      nextHtml = `${mode} • ${w} ${unit}/cable × ${nextItem.cables} • ${nextItem.reps} reps`;
-    } else if (nextItem){
-      const lvl = this.getEchoLevelLabel(nextItem.level);
-      nextHtml = `${lvl} • ecc ${nextItem.eccentricPct}% • target ${nextItem.targetReps} reps`;
-    }
-this.addLogEntry(
-  `Rest ${item.restSec}s → then next set/item (_runCurrentPlanBlock)`,
-  "info"
-);  
- this._beginRest(item.restSec, () => this._runCurrentPlanBlock(), `Next: ${nextItem?.name ?? "Item"}`, nextHtml);
-  }
-}
-
-_planFinish(){
-  this.planActive = false;
-  this.planOnWorkoutComplete = null;
-  clearTimeout(this.planRestTimer);
-  const inline = document.getElementById("planRestInline");
-  inline && (inline.textContent = "");
-  this.addLogEntry("Workout plan complete ✅", "success");
-}
-
-
-_restOpen(seconds, label = "Next set starts", nextHtml = ""){
-  const overlay = document.getElementById("restOverlay");
-  const ring = document.getElementById("restRing");
-  const remain = document.getElementById("restRemain");
-  const sub = document.getElementById("restSub");
-  const next = document.getElementById("restNext");
-  const inline = document.getElementById("planRestInline");
-  if (!overlay || !ring || !remain || !sub || !next) return;
-
-  this.restActive = true;
-  this.restPaused = false;
-  this.restDuration = Math.max(0, seconds|0);
-  this.restRemaining = this.restDuration;
-  this.restEndTs = performance.now() + this.restDuration * 1000;
-  this.restOnDone = null;
-  this.beeped = {1:false,2:false,3:false};
-
-  overlay.style.display = "grid";
-  sub.textContent = label;
-  remain.textContent = `${Math.ceil(this.restRemaining)}`;
-  next.innerHTML = nextHtml || "";
-  inline && (inline.textContent = `Rest: ${this._fmtSec(this.restRemaining)}`);
-
-  const C = 339.292;
-  ring.style.strokeDasharray = `${C}`;
-  ring.style.strokeDashoffset = "0";
-
-  cancelAnimationFrame(this.restRAF);
-  const tick = (now) => {
-    if (!this.restActive) return;
-
-    if (!this.restPaused) {
-      this.restRemaining = Math.max(0, (this.restEndTs - now) / 1000);
-    }
-
-    inline && (inline.textContent = `Rest: ${this._fmtSec(this.restRemaining)}`);
-
-    const r = Math.ceil(this.restRemaining);
-    if (r === 3 && !this.beeped[3]) { this.beeped[3] = true; this._beep(660, 120); }
-    if (r === 2 && !this.beeped[2]) { this.beeped[2] = true; this._beep(740, 120); }
-    if (r === 1 && !this.beeped[1]) { this.beeped[1] = true; this._beep(880, 140); }
-
-    remain.textContent = `${Math.ceil(this.restRemaining)}`;
-    const p = this.restDuration > 0 ? (1 - this.restRemaining / this.restDuration) : 1;
-    ring.style.strokeDashoffset = `${C * p}`;
-
-    if (this.restRemaining <= 0.05) {
-      this._restClose();
-      const cb = this.restOnDone; this.restOnDone = null;
-      cb && cb();
-      return;
-    }
-    this.restRAF = requestAnimationFrame(tick);
-  };
-  this.restRAF = requestAnimationFrame(tick);
-}
-_restClose(){
-  const overlay = document.getElementById("restOverlay");
-  const inline = document.getElementById("planRestInline");
-  overlay && (overlay.style.display = "none");
-  inline && (inline.textContent = "");
-  cancelAnimationFrame(this.restRAF);
-  this.restActive = false;
-}
-_restSkip(){
-  if (!this.restActive) return;
-  this._restClose();
-  const cb = this.restOnDone; this.restOnDone = null; cb && cb();
-}
-_restAdd(extraSeconds){
-  if (!this.restActive) return;
-  if (this.restPaused) this.restRemaining += extraSeconds;
-  else this.restEndTs += extraSeconds * 1000;
-  this.restDuration += extraSeconds;
-}
-_restTogglePause(){
-  const btn = document.getElementById("restPauseBtn");
-  if (!this.restActive || !btn) return;
-  if (!this.restPaused){
-    this.restPaused = true;
-    this.restRemaining = Math.max(0, (this.restEndTs - performance.now()) / 1000);
-    btn.textContent = "Resume";
-  } else {
-    this.restPaused = false;
-    this.restEndTs = performance.now() + this.restRemaining * 1000;
-    btn.textContent = "Pause";
-  }
-}
-_beginRest(seconds, onDone, label, nextHtml){
-  seconds = Math.max(0, (seconds|0));
-  if (seconds === 0){ onDone && onDone(); return; }
-  this.restOnDone = onDone;
-  this._restOpen(seconds, label, nextHtml);
-}
-
-
-
 
   // Toggle stop at top setting
   toggleStopAtTop() {
@@ -1244,44 +727,67 @@ _beginRest(seconds, onDone, label, nextHtml){
         const viewButtonHtml = hasTimingData
           ? `<button class="view-graph-btn" onclick="app.viewWorkoutOnGraph(${index})" title="View this workout on the graph">📊 View Graph</button>`
           : "";
-        return `
-      <div class="history-item">
-        <div class="history-item-title">${workout.mode}</div>
-        <div class="history-item-details">${weightStr} • ${workout.reps} reps</div>
-        ${viewButtonHtml}
-      </div>
-    `;
+return `
+  <div class="history-item">
+    <div class="history-item-title">
+      ${workout.setName ? `${workout.setName}` : "Unnamed Set"}
+      ${workout.mode ? ` — ${workout.mode}` : ""}
+      ${workout.setNumber && workout.setTotal ? ` (Set ${workout.setNumber}/${workout.setTotal})` : ""}
+    </div>
+    <div class="history-item-details">
+      ${weightStr} • ${workout.reps} reps
+    </div>
+    ${viewButtonHtml}
+  </div>    `;
       })
       .join("");
   }
 
-  completeWorkout() {
+ completeWorkout() {
 
-this.addLogEntry("Plan: completeWorkout() fired", "info");
-    if (this.currentWorkout) {
-      // Set end time
-      const endTime = new Date();
-      this.currentWorkout.endTime = endTime;
+const setLabel = document.getElementById("currentSetName");
+if (setLabel) setLabel.textContent = "";
 
-      // Add to history
-      this.addToWorkoutHistory({
-        mode: this.currentWorkout.mode,
-        weightKg: this.currentWorkout.weightKg,
-        reps: this.workingReps, // Actual reps completed
-        timestamp: endTime,
-        startTime: this.currentWorkout.startTime,
-        warmupEndTime: this.currentWorkout.warmupEndTime,
-        endTime: endTime,
-      });
+  if (this.currentWorkout) {
+    // stop polling to avoid queue buildup
+    this.device.stopPropertyPolling();
+    this.device.stopMonitorPolling();
 
-      // Reset to empty state
-      this.resetRepCountersToEmpty();
-      this.addLogEntry("Workout completed and saved to history", "success");
+    const endTime = new Date();
+    this.currentWorkout.endTime = endTime;
+
+    this.addToWorkoutHistory({
+      mode: this.currentWorkout.mode,
+      weightKg: this.currentWorkout.weightKg,
+      reps: this.workingReps,
+      timestamp: endTime,
+      startTime: this.currentWorkout.startTime,
+      warmupEndTime: this.currentWorkout.warmupEndTime,
+      endTime,
+
+  setName: this.currentWorkout.setName || null,
+  setNumber: this.currentWorkout.setNumber ?? null,
+  setTotal: this.currentWorkout.setTotal ?? null,
+  itemType: this.currentWorkout.itemType || null,
+
+
+    });
+
+    this.resetRepCountersToEmpty();
+    this.addLogEntry("Workout completed and saved to history", "success");
+  }
+
+  // 👉 hand control back to the plan runner so it can show the rest overlay
+  try {
+    if (this.planActive && typeof this.planOnWorkoutComplete === "function") {
+      this.addLogEntry("Plan: completeWorkout() fired", "info");
+      this.planOnWorkoutComplete();
     }
- 
+  } catch (e) {
+    /* no-op */
+  }
+}
 
-try { this.planOnWorkoutComplete && this.planOnWorkoutComplete(); } catch {}
- }
 
   // Get dynamic window size based on workout phase
   getWindowSize() {
@@ -1558,9 +1064,7 @@ try { this.planOnWorkoutComplete && this.planOnWorkoutComplete(); } catch {}
             "success",
           );
           this.stopWorkout(); // Must be explicitly stopped as the machine thinks the set isn't finished until the bottom of the final rep.
-          
-  // Important: stop the device before completing so the next set/item can start
-  this.stopWorkout(); // stopWorkout() will call completeWorkout() for us
+          this.completeWorkout();
         }
       }
     }
@@ -1767,6 +1271,12 @@ try { this.planOnWorkoutComplete && this.planOnWorkoutComplete(); } catch {}
       const modeName = isJustLift
         ? `Just Lift (${ProgramModeNames[baseMode]})`
         : ProgramModeNames[baseMode];
+
+
+
+const inPlan = this.planActive && this.planItems[this.planCursor.index];
+const planItem = inPlan ? this.planItems[this.planCursor.index] : null;
+
       this.currentWorkout = {
         mode: modeName || "Program",
         weightKg: perCableKg,
@@ -1774,6 +1284,13 @@ try { this.planOnWorkoutComplete && this.planOnWorkoutComplete(); } catch {}
         startTime: new Date(),
         warmupEndTime: null,
         endTime: null,
+
+  // ⬇ NEW: plan metadata for history
+  setName: planItem?.name || null,
+  setNumber: inPlan ? this.planCursor.set : null,
+  setTotal: planItem?.sets ?? null,
+  itemType: planItem?.type || "exercise",
+
       };
       this.updateRepCounters();
 
@@ -1782,10 +1299,6 @@ try { this.planOnWorkoutComplete && this.planOnWorkoutComplete(); } catch {}
       if (autoStopTimer) {
         autoStopTimer.style.display = isJustLift ? "block" : "none";
       }
-
-// Safety: ensure previous sequence is stopped
-try { await this.device.sendStopCommand(); } catch {}
-
 
       await this.device.startProgram(params);
 
@@ -1804,11 +1317,24 @@ try { await this.device.sendStopCommand(); } catch {}
 
       // Close sidebar on mobile after starting
       this.closeSidebar();
-    } catch (error) {
+} catch (error) {
       console.error("Start program error:", error);
       this.addLogEntry(`Failed to start program: ${error.message}`, "error");
       alert(`Failed to start program: ${error.message}`);
     }
+
+// === Update current set name under "Live Workout Data" ===
+const setLabel = document.getElementById("currentSetName");
+if (setLabel) {
+  // If a plan is active, show the current plan item's name; otherwise clear
+  if (this.planActive && this.planItems[this.planCursor.index]) {
+    const planItem = this.planItems[this.planCursor.index];
+    setLabel.textContent = planItem.name || "Unnamed Set";
+  } else {
+    setLabel.textContent = "Live Set";
+  }
+}
+
   }
 
   async startEcho() {
@@ -1862,13 +1388,23 @@ try { await this.device.sendStopCommand(); } catch {}
       const modeName = isJustLift
         ? `Just Lift Echo ${EchoLevelNames[level]}`
         : `Echo ${EchoLevelNames[level]}`;
-      this.currentWorkout = {
+      
+const inPlan = this.planActive && this.planItems[this.planCursor.index];
+const planItem = inPlan ? this.planItems[this.planCursor.index] : null;
+
+this.currentWorkout = {
         mode: modeName,
         weightKg: 0, // Echo mode doesn't have fixed weight
         targetReps: targetReps,
         startTime: new Date(),
         warmupEndTime: null,
         endTime: null,
+
+  setName: planItem?.name || null,
+  setNumber: inPlan ? this.planCursor.set : null,
+  setTotal: planItem?.sets ?? null,
+  itemType: planItem?.type || "echo",
+
       };
       this.updateRepCounters();
 
@@ -1877,11 +1413,6 @@ try { await this.device.sendStopCommand(); } catch {}
       if (autoStopTimer) {
         autoStopTimer.style.display = isJustLift ? "block" : "none";
       }
-
-
-
-// Safety: ensure previous sequence is stopped
-try { await this.device.sendStopCommand(); } catch {}
 
       await this.device.startEcho(params);
 
@@ -1905,6 +1436,19 @@ try { await this.device.sendStopCommand(); } catch {}
       this.addLogEntry(`Failed to start Echo mode: ${error.message}`, "error");
       alert(`Failed to start Echo mode: ${error.message}`);
     }
+
+// === Update current set name under "Live Workout Data" ===
+const setLabel = document.getElementById("currentSetName");
+if (setLabel) {
+  // If a plan is active, show the current plan item's name; otherwise clear
+  if (this.planActive && this.planItems[this.planCursor.index]) {
+    const planItem = this.planItems[this.planCursor.index];
+    setLabel.textContent = planItem.name || "Unnamed Set";
+  } else {
+    setLabel.textContent = "Live Set";
+  }
+}
+
   }
 
   loadColorPreset() {
@@ -1936,7 +1480,600 @@ try { await this.device.sendStopCommand(); } catch {}
   }
 
 
+  /* =========================
+     PLAN — DATA HELPERS
+     ========================= */
 
+  getUnitLabelShort() { return this.getUnitLabel(); } // alias for UI labels
+
+  // Make an empty Exercise row
+  makeExerciseRow() {
+    return {
+      type: "exercise",
+      name: "Untitled Exercise",
+      mode: ProgramMode.OLD_SCHOOL,        // numeric mode
+      perCableKg: 10,                      // stored as kg
+      reps: 10,
+      sets: 3,
+      restSec: 60,
+      cables: 2,
+      justLift: false,
+      stopAtTop: false,
+      progressionKg: 0,                    // reuse progression logic if desired
+    };
+  }
+
+  // Make an empty Echo row
+  makeEchoRow() {
+    return {
+      type: "echo",
+      name: "Echo Block",
+      level: EchoLevel.HARD,  // numeric 0..3
+      eccentricPct: 100,
+      targetReps: 2,
+      sets: 3,
+      restSec: 60,
+      justLift: false,
+      stopAtTop: false,
+    };
+  }
+
+
+// Apply a plan item to the visible sidebar UI (Program or Echo)
+// Also sets the global Stop-at-Top checkbox to match the item's setting.
+_applyItemToUI(item){
+  if (!item) return;
+
+  // Stop at Top (primary/global)
+  const sat = document.getElementById("stopAtTopCheckbox");
+  if (sat) {
+    sat.checked = !!item.stopAtTop;
+    this.stopAtTop = !!item.stopAtTop;           // keep runtime flag in sync
+  }
+
+  if (item.type === "exercise") {
+    // Program Mode fields
+    const modeSel   = document.getElementById("mode");
+    const weightInp = document.getElementById("weight");
+    const repsInp   = document.getElementById("reps");
+    const progInp   = document.getElementById("progression");
+    const jlChk     = document.getElementById("justLiftCheckbox");
+
+    if (modeSel)   modeSel.value = String(item.mode);
+    if (weightInp) weightInp.value = this.formatWeightValue(item.perCableKg, this.getWeightInputDecimals());
+    if (repsInp)   repsInp.value = String(item.reps);
+    if (progInp)   progInp.value = this.formatWeightValue(item.progressionKg, this.getProgressionInputDecimals());
+    if (jlChk)     { jlChk.checked = !!item.justLift; this.toggleJustLiftMode(); }
+
+  } else if (item.type === "echo") {
+    // Echo Mode fields
+    const levelSel  = document.getElementById("echoLevel");
+    const eccInp    = document.getElementById("eccentric");
+    const targInp   = document.getElementById("targetReps");
+    const jlChkE    = document.getElementById("echoJustLiftCheckbox");
+
+    // UI is 1..4 while internal is 0..3 in many builds—adjust if your UI expects 0..3, drop the +1
+    if (levelSel) levelSel.value = String((item.level ?? 0) + 1);
+    if (eccInp)   eccInp.value   = String(item.eccentricPct ?? 100);
+    if (targInp)  targInp.value  = String(item.targetReps ?? 0);
+    if (jlChkE)   { jlChkE.checked = !!item.justLift; this.toggleEchoJustLiftMode(); }
+  }
+}
+
+
+  /* =========================
+     PLAN — UI RENDER
+     ========================= */
+
+  renderPlanUI() {
+    const container = document.getElementById("planItems");
+    if (!container) return;
+
+    const unit = this.getUnitLabelShort();
+
+    const makeRow = (item, i) => {
+      const card = document.createElement("div");
+      card.style.background = "#f8f9fa";
+      card.style.padding = "12px";
+      card.style.borderRadius = "8px";
+      card.style.borderLeft = "4px solid #667eea";
+
+      const sectionTitle =
+        item.type === "exercise"
+          ? `Exercise`
+          : `Echo Mode`;
+
+      const title = document.createElement("div");
+      title.style.display = "flex";
+      title.style.justifyContent = "space-between";
+      title.style.alignItems = "center";
+      title.style.marginBottom = "10px";
+      title.innerHTML = `
+        <div style="font-weight:700; color:#212529">${sectionTitle}</div>
+        <div style="display:flex; gap:8px;">
+          <button class="secondary" style="width:auto; padding:6px 10px;" onclick="app.movePlanItem(${i}, -1)">Move Up</button>
+          <button class="secondary" style="width:auto; padding:6px 10px;" onclick="app.movePlanItem(${i}, 1)">Move Down</button>
+          <button class="secondary" style="width:auto; padding:6px 10px; background:#dc3545" onclick="app.removePlanItem(${i})">Delete</button>
+        </div>
+      `;
+      card.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.style.display = "grid";
+      grid.style.gridTemplateColumns = "1fr 1fr";
+      grid.style.gap = "10px";
+
+      // Common: Name, Sets, Rest, JL, StopAtTop
+      const commonHtml = `
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" value="${item.name || ""}" oninput="app.updatePlanField(${i}, 'name', this.value)" />
+        </div>
+
+        <div class="form-group">
+          <label>Sets</label>
+          <input type="number" min="1" max="99" value="${item.sets}" oninput="app.updatePlanField(${i}, 'sets', parseInt(this.value)||1)" />
+        </div>
+
+        <div class="form-group">
+          <label>Rest (sec)</label>
+          <input type="number" min="0" max="600" value="${item.restSec}" oninput="app.updatePlanField(${i}, 'restSec', parseInt(this.value)||0)" />
+        </div>
+
+        <div class="form-group" style="align-self:center">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" ${item.justLift ? "checked" : ""} onchange="app.updatePlanField(${i}, 'justLift', this.checked)" style="width:auto;" />
+            <span>Just lift mode</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:6px;">
+            <input type="checkbox" ${item.stopAtTop ? "checked" : ""} onchange="app.updatePlanField(${i}, 'stopAtTop', this.checked)" style="width:auto;" />
+            <span>Stop at Top of final rep</span>
+          </label>
+        </div>
+      `;
+
+      if (item.type === "exercise") {
+        const displayPerCable = this.formatWeightValue(item.perCableKg);
+        const modeOptions = [
+          [ProgramMode.OLD_SCHOOL, "Old School"],
+          [ProgramMode.PUMP, "Pump"],
+          [ProgramMode.TUT, "TUT"],
+          [ProgramMode.TUT_BEAST, "TUT Beast"],
+          [ProgramMode.ECCENTRIC_ONLY, "Eccentric Only"],
+        ].map(([val, label]) => `<option value="${val}" ${item.mode===val?"selected":""}>${label}</option>`).join("");
+
+        grid.innerHTML = `
+          <div class="form-group">
+            <label>Mode</label>
+            <select onchange="app.updatePlanField(${i}, 'mode', parseInt(this.value))">
+              ${modeOptions}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Weight per cable (${unit})</label>
+            <input type="number" min="0" max="1000" step="${unit==='lb' ? 1 : 0.5}"
+                   value="${this.convertKgToDisplay(item.perCableKg).toFixed(this.getWeightInputDecimals())}"
+                   oninput="app.updatePlanPerCableDisplay(${i}, this.value)" />
+          </div>
+
+          <div class="form-group">
+            <label>Reps</label>
+            <input type="number" min="0" max="100" value="${item.reps}" oninput="app.updatePlanField(${i}, 'reps', parseInt(this.value)||0)" />
+          </div>
+
+          <div class="form-group">
+            <label>Cables</label>
+            <input type="number" min="1" max="2" value="${item.cables}" oninput="app.updatePlanField(${i}, 'cables', Math.min(2, Math.max(1, parseInt(this.value)||1)))" />
+          </div>
+
+          <div class="form-group">
+            <label>Progression (${unit} per rep)</label>
+            <input type="number"
+                   step="${unit==='lb' ? 0.2 : 0.1}"
+                   min="${this.convertKgToDisplay(-3)}"
+                   max="${this.convertKgToDisplay(3)}"
+                   value="${this.convertKgToDisplay(item.progressionKg).toFixed(this.getProgressionInputDecimals())}"
+                   oninput="app.updatePlanProgressionDisplay(${i}, this.value)" />
+          </div>
+
+          ${commonHtml}
+        `;
+      } else {
+        // echo
+        const levelOptions = [
+          [EchoLevel.HARD, "Hard"],
+          [EchoLevel.HARDER, "Harder"],
+          [EchoLevel.HARDEST, "Hardest"],
+          [EchoLevel.EPIC, "Epic"],
+        ].map(([val, label]) => `<option value="${val}" ${item.level===val?"selected":""}>${label}</option>`).join("");
+
+        grid.innerHTML = `
+          <div class="form-group">
+            <label>Level</label>
+            <select onchange="app.updatePlanField(${i}, 'level', parseInt(this.value))">
+              ${levelOptions}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Eccentric %</label>
+            <input type="number" min="0" max="150" step="5" value="${item.eccentricPct}" oninput="app.updatePlanField(${i}, 'eccentricPct', parseInt(this.value)||0)" />
+          </div>
+
+          <div class="form-group">
+            <label>Target Reps</label>
+            <input type="number" min="0" max="30" value="${item.targetReps}" oninput="app.updatePlanField(${i}, 'targetReps', parseInt(this.value)||0)" />
+          </div>
+
+          ${commonHtml}
+        `;
+      }
+
+      card.appendChild(grid);
+      return card;
+    };
+
+    container.innerHTML = "";
+    if (this.planItems.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.color = "#6c757d";
+      empty.style.fontSize = "0.9em";
+      empty.style.textAlign = "center";
+      empty.style.padding = "10px";
+      empty.textContent = "No items yet — add an Exercise or Echo Mode.";
+      container.appendChild(empty);
+    } else {
+      this.planItems.forEach((it, idx) => container.appendChild(makeRow(it, idx)));
+    }
+  }
+
+  /* =========================
+     PLAN — UI ACTIONS
+     ========================= */
+
+  addPlanExercise() {
+    this.planItems.push(this.makeExerciseRow());
+    this.renderPlanUI();
+  }
+
+  addPlanEcho() {
+    this.planItems.push(this.makeEchoRow());
+    this.renderPlanUI();
+  }
+
+  resetPlanToDefaults() {
+    this.planItems = [
+      { ...this.makeExerciseRow(), name: "Back Squat", mode: ProgramMode.OLD_SCHOOL, perCableKg: 15, reps: 8, sets: 3, restSec: 90, stopAtTop: true },
+      { ...this.makeEchoRow(),    name: "Echo Finishers", level: EchoLevel.HARDER, eccentricPct: 120, targetReps: 2, sets: 2, restSec: 60 },
+    ];
+    this.renderPlanUI();
+  }
+
+  removePlanItem(index) {
+    this.planItems.splice(index, 1);
+    this.renderPlanUI();
+  }
+
+  movePlanItem(index, delta) {
+    const j = index + delta;
+    if (j < 0 || j >= this.planItems.length) return;
+    const [row] = this.planItems.splice(index, 1);
+    this.planItems.splice(j, 0, row);
+    this.renderPlanUI();
+  }
+
+  updatePlanField(index, key, value) {
+    const it = this.planItems[index];
+    if (!it) return;
+    it[key] = value;
+    // If user toggled stopAtTop on an item, nothing live to do yet; applied when running that item.
+  }
+
+  updatePlanPerCableDisplay(index, displayVal) {
+    const kg = this.convertDisplayToKg(parseFloat(displayVal));
+    if (isNaN(kg)) return;
+    this.planItems[index].perCableKg = Math.max(0, kg);
+  }
+
+  updatePlanProgressionDisplay(index, displayVal) {
+    const kg = this.convertDisplayToKg(parseFloat(displayVal));
+    if (isNaN(kg)) return;
+    this.planItems[index].progressionKg = Math.max(-3, Math.min(3, kg));
+  }
+
+startPlan(){
+  if (!this.planItems || this.planItems.length === 0){
+    this.addLogEntry("No items in plan.", "warning");
+    return;
+  }
+
+  this.planActive = true;
+  this.planCursor = { index: 0, set: 1 };
+  this.planOnWorkoutComplete = () => this._planAdvance();
+  this.addLogEntry(`Starting plan with ${this.planItems.length} item(s)`, "success");
+
+  // ⬇️ Prefill Program/Echo UI + Stop-at-Top & Just Lift for the first set
+  this._applyItemToUI(this.planItems[0]);
+
+  // If you auto-start, keep this; otherwise, remove the next line to let user review first:
+  this._runCurrentPlanBlock();
+}
+
+
+// Run the currently selected plan block (exercise or echo)
+// Uses the visible UI and calls startProgram()/startEcho() just like pressing the buttons.
+async _runCurrentPlanBlock(){
+  if (!this.planActive) return;
+
+  const i = this.planCursor.index;
+  const item = this.planItems[i];
+  if (!item){ this._planFinish?.(); return; }
+
+  // Prefill sidebar so startProgram/startEcho read the right values
+  this._applyItemToUI?.(item);
+
+  // Log what's about to run
+  const label = item.type === "exercise" ? "exercise" : "echo";
+  this.addLogEntry(`Plan item ${i+1}/${this.planItems.length}, set ${this.planCursor.set}/${item.sets}: ${item.name || "Untitled " + (label[0].toUpperCase()+label.slice(1))}`, "info");
+
+  try {
+    // Respect per-item Stop-at-Top for this run
+    const prevStopAtTop = this.stopAtTop;
+    this.stopAtTop = !!item.stopAtTop;
+
+    if (item.type === "exercise") {
+      // Starts using values we just injected into Program Mode UI
+      this.addLogEntry("Starting exercise — set " + this.planCursor.set + "/" + item.sets, "info");
+      await this.startProgram();
+    } else {
+      // Starts using values we just injected into Echo Mode UI
+      this.addLogEntry("Starting echo — set " + this.planCursor.set + "/" + item.sets, "info");
+      await this.startEcho();
+    }
+
+    // restore global flag after we’ve kicked off the set
+    this.stopAtTop = prevStopAtTop;
+  } catch (e) {
+    this.addLogEntry(`Failed to start plan block: ${e.message}`, "error");
+    // fail-safe: try finishing the plan so we don't get stuck
+    this._planFinish?.();
+  }
+}
+
+// Decide next step after a block finishes: next set of same item, or next item.
+// Schedules rest and then calls _runCurrentPlanBlock() again.
+_planAdvance(){
+  if (!this.planActive) return;
+
+  const curIndex = this.planCursor.index;
+  const item = this.planItems[curIndex];
+  if (!item){ this._planFinish?.(); return; }
+
+  // If more sets remain for this item → rest, then same item next set
+  if (this.planCursor.set < item.sets) {
+    this.planCursor.set += 1;
+
+    // Build "Up next" preview text
+    const unit = this.getUnitLabel();
+    let nextHtml = "";
+    if (item.type === "exercise"){
+      const w = this.convertKgToDisplay(item.perCableKg).toFixed(this.getWeightInputDecimals());
+      const modeName = ProgramModeNames?.[item.mode] || "Mode";
+      nextHtml = `${modeName} • ${w} ${unit}/cable × ${item.cables ?? 2} • ${item.reps} reps`;
+    } else {
+      const lvl = EchoLevelNames?.[item.level] || "Level";
+      nextHtml = `${lvl} • ecc ${item.eccentricPct}% • target ${item.targetReps} reps`;
+    }
+
+    // Prefill the UI for the upcoming set so startProgram/startEcho will read correct values
+    this._applyItemToUI?.(item);
+
+    // Rest → then run the same item again
+    this.addLogEntry(`Rest ${item.restSec}s → then next set/item (_runCurrentPlanBlock)`, "info");
+    this._beginRest
+      ? this._beginRest(item.restSec, () => this._runCurrentPlanBlock(), `Next set (${this.planCursor.set}/${item.sets})`, nextHtml, item)
+      : setTimeout(() => this._runCurrentPlanBlock(), Math.max(0, (item.restSec|0))*1000);
+    return;
+  }
+
+  // Otherwise advance to next item
+  this.planCursor.index += 1;
+  this.planCursor.set = 1;
+
+  if (this.planCursor.index >= this.planItems.length){
+    // No more items
+    this._planFinish?.();
+    return;
+  }
+
+  const nextItem = this.planItems[this.planCursor.index];
+
+  // Build "Up next" preview text
+  const unit = this.getUnitLabel();
+  let nextHtml = "";
+  if (nextItem.type === "exercise"){
+    const w = this.convertKgToDisplay(nextItem.perCableKg).toFixed(this.getWeightInputDecimals());
+    const modeName = ProgramModeNames?.[nextItem.mode] || "Mode";
+    nextHtml = `${modeName} • ${w} ${unit}/cable × ${nextItem.cables ?? 2} • ${nextItem.reps} reps`;
+  } else {
+    const lvl = EchoLevelNames?.[nextItem.level] || "Level";
+    nextHtml = `${lvl} • ecc ${nextItem.eccentricPct}% • target ${nextItem.targetReps} reps`;
+  }
+
+  // Prefill the UI for the next item so startProgram/startEcho will read correct values
+  this._applyItemToUI?.(nextItem);
+
+  // Use the *current* item's rest before the next item starts (common convention)
+  this.addLogEntry(`Rest ${item.restSec}s → then next set/item (_runCurrentPlanBlock)`, "info");
+  this._beginRest
+    ? this._beginRest(item.restSec, () => this._runCurrentPlanBlock(), `Next: ${nextItem.name || (nextItem.type === "exercise" ? "Exercise" : "Echo Mode")}`, nextHtml, nextItem)
+    : setTimeout(() => this._runCurrentPlanBlock(), Math.max(0, (item.restSec|0))*1000);
+}
+
+
+// Show a ring countdown, update “up next”, wire Skip/+30s, then call onDone()
+_beginRest(totalSec, onDone, labelText = "Next set", nextHtml = "", nextItemOrName = null) {
+  const overlay   = document.getElementById("restOverlay");
+  const progress  = document.getElementById("restProgress");
+  const timeText  = document.getElementById("restTimeText");
+  const nextDiv   = document.getElementById("restNext");
+  const addBtn    = document.getElementById("restAddBtn");
+  const skipBtn   = document.getElementById("restSkipBtn");
+  const inlineHud = document.getElementById("planRestInline");
+  const setNameEl = document.getElementById("restSetName");
+
+  // Fallback: if overlay not present, just delay then continue
+  if (!overlay || !progress || !timeText) {
+    const ms = Math.max(0, (totalSec|0) * 1000);
+    this.addLogEntry(`(No overlay found) Rest ${totalSec}s…`, "info");
+    setTimeout(() => onDone && onDone(), ms);
+    return;
+  }
+
+  // Setup UI
+  overlay.classList.remove("hidden");
+  if (nextDiv) nextDiv.innerHTML = nextHtml || "";
+  if (inlineHud) inlineHud.textContent = `Rest: ${totalSec}s`;
+
+  const nextName = (typeof nextItemOrName === "string")
+    ? nextItemOrName
+    : (nextItemOrName && nextItemOrName.name) || "";
+  if (setNameEl) setNameEl.textContent = nextName;
+
+  const CIRC = 2 * Math.PI * 45; // r=45 in index.html
+  progress.setAttribute("stroke-dasharray", CIRC.toFixed(3));
+
+  let remaining = Math.max(0, totalSec|0);
+  let paused = false;
+  let rafId = null;
+  let endT = performance.now() + remaining * 1000;
+
+  const closeOverlay = () => { // ← NEW helper to clear name as well
+    overlay.classList.add("hidden");
+    if (inlineHud) inlineHud.textContent = "";
+    if (setNameEl) setNameEl.textContent = "";
+  };
+
+  const tick = (t) => {
+    if (paused) { rafId = requestAnimationFrame(tick); return; }
+    const leftMs = Math.max(0, endT - t);
+    remaining = Math.ceil(leftMs / 1000);
+
+    // ring
+    const ratio = Math.min(1, Math.max(0, leftMs / (totalSec * 1000)));
+    const dash  = ratio * CIRC;
+    progress.setAttribute("stroke-dashoffset", String((CIRC - dash).toFixed(3)));
+
+    // text
+    timeText.textContent = String(remaining);
+    if (inlineHud) inlineHud.textContent = `Rest: ${remaining}s`;
+
+    if (leftMs <= 0) {
+      // done
+      cancelAnimationFrame(rafId);
+      overlay.classList.add("hidden");
+      if (inlineHud) inlineHud.textContent = "";
+      this.addLogEntry("Rest finished → starting next block", "success");
+      onDone && onDone();
+      return;
+    }
+    rafId = requestAnimationFrame(tick);
+  };
+
+  // Buttons
+  const add30 = () => {
+    const addMs = 30_000;
+    endT += addMs;
+    this.addLogEntry("+30s added to rest", "info");
+  };
+  const skip = () => {
+    this.addLogEntry("Rest skipped", "info");
+    cancelAnimationFrame(rafId);
+    overlay.classList.add("hidden");
+    if (inlineHud) inlineHud.textContent = "";
+    onDone && onDone();
+  };
+
+  addBtn.onclick = add30;
+  skipBtn.onclick = skip;
+
+  // start loop
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(tick);
+}
+
+
+
+  /* =========================
+     PLAN — PERSISTENCE
+     ========================= */
+
+  plansKey() { return "vitruvian.plans.index"; }
+  planKey(name) { return `vitruvian.plan.${name}`; }
+
+  getAllPlanNames() {
+    try {
+      const raw = localStorage.getItem(this.plansKey());
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  }
+
+  setAllPlanNames(arr) {
+    try { localStorage.setItem(this.plansKey(), JSON.stringify(arr)); } catch {}
+  }
+
+  populatePlanSelect() {
+    const sel = document.getElementById("planSelect");
+    if (!sel) return;
+    const names = this.getAllPlanNames();
+    sel.innerHTML = names.length ? names.map(n=>`<option value="${n}">${n}</option>`).join("") : `<option value="">(no saved plans)</option>`;
+  }
+
+  saveCurrentPlan() {
+    const nameInput = document.getElementById("planNameInput");
+    const name = (nameInput?.value || "").trim();
+    if (!name) { alert("Enter a plan name first."); return; }
+    try {
+      localStorage.setItem(this.planKey(name), JSON.stringify(this.planItems));
+      const names = new Set(this.getAllPlanNames());
+      names.add(name);
+      this.setAllPlanNames([...names]);
+      this.populatePlanSelect();
+      this.addLogEntry(`Saved plan "${name}" (${this.planItems.length} items)`, "success");
+    } catch (e) {
+      alert(`Could not save plan: ${e.message}`);
+    }
+  }
+
+  loadSelectedPlan() {
+    const sel = document.getElementById("planSelect");
+    if (!sel || !sel.value) { alert("No saved plan selected."); return; }
+    try {
+      const raw = localStorage.getItem(this.planKey(sel.value));
+      if (!raw) { alert("Saved plan not found."); return; }
+      this.planItems = JSON.parse(raw) || [];
+      this.renderPlanUI();
+      this.addLogEntry(`Loaded plan "${sel.value}"`, "success");
+    } catch (e) {
+      alert(`Could not load plan: ${e.message}`);
+    }
+  }
+
+  deleteSelectedPlan() {
+    const sel = document.getElementById("planSelect");
+    if (!sel || !sel.value) { alert("No saved plan selected."); return; }
+    const name = sel.value;
+    try {
+      localStorage.removeItem(this.planKey(name));
+      const remaining = this.getAllPlanNames().filter(n=>n!==name);
+      this.setAllPlanNames(remaining);
+      this.populatePlanSelect();
+      this.addLogEntry(`Deleted plan "${name}"`, "info");
+    } catch (e) {
+      alert(`Could not delete plan: ${e.message}`);
+    }
+  }
 
 
 
