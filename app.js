@@ -1783,7 +1783,17 @@ _applyItemToUI(item){
   }
 
 startPlan(){
-  if (!this.planItems || this.planItems.length === 0){
+ 
+ // ✅ 1. Check device connection first
+  if (!this.device || !this.device.isConnected) {
+    // Add message in the console log panel
+    this.addLogEntry("⚠️ Please connect your Vitruvian device before starting a plan.", "error");
+    // Optional popup for visibility
+    alert("Please connect your Vitruvian device before starting a plan.");
+    return; // Stop execution
+  }
+
+ if (!this.planItems || this.planItems.length === 0){
     this.addLogEntry("No items in plan.", "warning");
     return;
   }
