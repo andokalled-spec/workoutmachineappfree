@@ -391,8 +391,8 @@ class VitruvianApp {
       statusDiv.className = "status connected";
       connectBtn.disabled = true;
       disconnectBtn.disabled = false;
-      programSection.classList.remove("hidden");
-      echoSection.classList.remove("hidden");
+  //KEEP PROGRAM HIDDEN    programSection.classList.remove("hidden");
+  //KEEP ECHO HIDDEN    echoSection.classList.remove("hidden");
       colorSection.classList.remove("hidden");
     } else {
       statusDiv.textContent = "Disconnected";
