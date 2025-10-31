@@ -102,6 +102,7 @@
                 color: #667eea;
                 margin-bottom: 20px;
                 font-size: 1.4em;
+                text-align: center;
             }
 
             /* Mobile hamburger */
@@ -117,6 +118,7 @@
                 border-radius: 8px;
                 cursor: pointer;
                 box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+                width: 50px;
             }
 
             .hamburger span {
@@ -917,7 +919,7 @@
                     <!-- Live stats card -->
                     <div class="live-card" id="liveStatsCard">
                         <h2>Live Workout Data</h2>
-
+<div id="currentSetName" style="margin-bottom:6px; font-weight:600; color:#444;">&nbsp;</div>
                         <!-- Rep Counters -->
                         <div
                             style="
@@ -1245,47 +1247,48 @@
                     </div>
 
 
+                   
 <!-- Rest Overlay -->
-<div id="restOverlay" style="
-  position: fixed; inset: 0; display: none; place-items: center; z-index: 9999;
-  background: rgba(0,0,0,0.45); backdrop-filter: blur(2px);
-">
-  <div style="
-    background: #ffffff; color:#111; width: min(92vw, 380px);
-    border-radius: 16px; padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.25);
-    display: grid; gap: 14px; justify-items: center;
-  ">
-    <div style="font-weight:700; font-size: 1.1rem;">Rest</div>
+<div id="restOverlay" class="rest-overlay hidden">
+  <div class="rest-card">
+    <div id="restLabel" class="rest-label">Next set starts</div>
+    <div id="restSetName" class="rest-setname"></div> 
 
-    <!-- Ring -->
-    <div style="position: relative; width: 200px; height: 200px;">
-      <svg viewBox="0 0 120 120" style="width: 100%; height: 100%; transform: rotate(-90deg);">
-        <circle cx="60" cy="60" r="54" stroke="#e9ecef" stroke-width="10" fill="none"></circle>
-        <circle id="restRing" cx="60" cy="60" r="54" stroke="#667eea" stroke-width="10" fill="none"
-                stroke-linecap="round" stroke-dasharray="339.292"
-                stroke-dashoffset="0"></circle>
+    <div class="rest-ring">
+      <svg width="140" height="140" viewBox="0 0 100 100">
+        <!-- track -->
+        <circle cx="50" cy="50" r="45" stroke="#e9ecef" stroke-width="8" fill="none"/>
+        <!-- progress -->
+        <circle id="restProgress" cx="50" cy="50" r="45"
+                stroke="#667eea" stroke-width="8" fill="none"
+                stroke-linecap="round"
+                stroke-dasharray="282.743" stroke-dashoffset="0"
+                transform="rotate(-90 50 50)"/>
+        <text id="restTimeText" x="50" y="55" text-anchor="middle" font-size="22" fill="#212529">0</text>
       </svg>
-
-      <!-- Remaining text -->
-      <div id="restRemain" style="
-        position:absolute; inset:0; display:grid; place-items:center;
-        font-size: 2.2rem; font-weight: 800; color:#111; transform: none;
-      ">0</div>
-      <div id="restSub" style="
-        position:absolute; inset:0; top: 118px; text-align:center; color:#6c757d; font-size:.9rem;
-      "></div>
-      <div id="restNext" style="margin-top:8px; text-align:center; font-size:.95rem; color:#343a40;"></div>
     </div>
 
-    <div style="display:flex; gap:10px; width:100%; justify-content:center;">
-      <button id="restSkipBtn" class="secondary" style="background:#dc3545; color:#fff;">Skip</button>
-      <button id="restAddBtn" class="secondary">+30s</button>
-      <button id="restPauseBtn" class="secondary">Pause</button>
+    <div id="restNext" class="rest-next"><!-- next block summary --></div>
+
+    <div class="rest-actions">
+      <button id="restAddBtn"  class="secondary">+30 sec</button>
+      <button id="restSkipBtn" class="primary">Skip</button>
     </div>
   </div>
 </div>
-                   
 
+<style>
+  .rest-overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); z-index:9999; }
+  .rest-overlay.hidden { display:none; }
+  .rest-card { width:min(560px,92vw); background:#fff; border-radius:14px; padding:18px 20px; box-shadow:0 12px 40px rgba(0,0,0,.2); }
+  .rest-label { font-weight:700; color:#212529; margin-bottom:8px; text-align:center; }
+  .rest-ring  { display:grid; place-items:center; margin:6px 0 12px; }
+  .rest-next  { color:#495057; font-size:.95rem; text-align:center; margin-bottom:12px; }
+  .rest-actions { display:flex; gap:10px; justify-content:center; }
+  .rest-actions .primary   { background:#667eea; color:#fff; border:0; padding:8px 14px; border-radius:8px; }
+  .rest-actions .secondary { background:#f1f3f5; color:#212529; border:0; padding:8px 14px; border-radius:8px; }
+  .rest-setname { text-align:center; font-weight:600; color:#343a40; margin-top:2px; margin-bottom:4px; }
+</style>
 
 	 <!-- Log card -->
                     <div class="live-card">
