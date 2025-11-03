@@ -7,6 +7,7 @@ class VitruvianApp {
   constructor() {
     this.device = new VitruvianDevice();
     this.chartManager = new ChartManager("loadGraph");
+    this.dropboxManager = new DropboxManager(); // Dropbox cloud storage
     this.maxPos = 1000; // Shared max for both cables (keeps bars comparable)
     this.weightUnit = "kg"; // Display unit for weights (default)
     this.stopAtTop = false; // Stop at top of final rep instead of bottom
@@ -35,9 +36,10 @@ class VitruvianApp {
     this.setupLogging();
     this.setupChart();
     this.setupUnitControls();
+    this.setupDropbox();
     this.resetRepCountersToEmpty();
     this.updateStopButtonState();
-	
+
     this.planItems = [];        // array of {type: 'exercise'|'echo', fields...}
     this.planActive = false;    // true when plan runner is active
     this.planCursor = { index: 0, set: 1 }; // current item & set counter
@@ -85,6 +87,188 @@ class VitruvianApp {
       this.setWeightUnit(storedUnit, { previousUnit: this.weightUnit });
     } else {
       this.onUnitChanged();
+    }
+  }
+
+  setupDropbox() {
+    // Connect Dropbox logging to UI
+    this.dropboxManager.onLog = (message, type) => {
+      this.addLogEntry(`[Dropbox] ${message}`, type);
+    };
+
+    // Handle connection state changes
+    this.dropboxManager.onConnectionChange = (isConnected) => {
+      this.updateDropboxUI(isConnected);
+    };
+
+    // Initialize Dropbox (check for existing token or OAuth callback)
+    this.dropboxManager.init().catch((error) => {
+      this.addLogEntry(`Dropbox initialization error: ${error.message}`, "error");
+    });
+  }
+
+  updateDropboxUI(isConnected) {
+    const notConnectedDiv = document.getElementById("dropboxNotConnected");
+    const connectedDiv = document.getElementById("dropboxConnected");
+    const statusBadge = document.getElementById("dropboxStatusBadge");
+
+    if (isConnected) {
+      if (notConnectedDiv) notConnectedDiv.style.display = "none";
+      if (connectedDiv) connectedDiv.style.display = "block";
+
+      // Update status badge
+      if (statusBadge) {
+        statusBadge.textContent = "Connected";
+        statusBadge.style.background = "#d3f9d8";
+        statusBadge.style.color = "#2b8a3e";
+      }
+
+      // Show last backup info if available
+      this.updateLastBackupDisplay();
+    } else {
+      if (notConnectedDiv) notConnectedDiv.style.display = "block";
+      if (connectedDiv) connectedDiv.style.display = "none";
+
+      // Update status badge
+      if (statusBadge) {
+        statusBadge.textContent = "Not Connected";
+        statusBadge.style.background = "#e0e0e0";
+        statusBadge.style.color = "#6c757d";
+      }
+    }
+  }
+
+  updateLastBackupDisplay() {
+    const lastBackupDiv = document.getElementById("dropboxLastBackup");
+    if (!lastBackupDiv) return;
+
+    const lastBackup = localStorage.getItem("vitruvian.dropbox.lastBackup");
+    if (lastBackup) {
+      const date = new Date(lastBackup);
+      const timeAgo = this.getTimeAgo(date);
+      lastBackupDiv.innerHTML = `📁 Last backup: <strong>${timeAgo}</strong>`;
+      lastBackupDiv.style.display = "block";
+    } else {
+      lastBackupDiv.innerHTML = `📁 No backups yet. Complete a workout to create your first backup.`;
+      lastBackupDiv.style.display = "block";
+    }
+  }
+
+  getTimeAgo(date) {
+    const seconds = Math.floor((new Date() - date) / 1000);
+
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)} days ago`;
+
+    return date.toLocaleDateString();
+  }
+
+  async connectDropbox() {
+    try {
+      await this.dropboxManager.connect();
+    } catch (error) {
+      this.addLogEntry(`Failed to connect Dropbox: ${error.message}`, "error");
+      alert(`Failed to connect to Dropbox: ${error.message}`);
+    }
+  }
+
+  disconnectDropbox() {
+    if (confirm("Are you sure you want to disconnect Dropbox? Your workout history will remain in your Dropbox, but new workouts won't be automatically backed up.")) {
+      this.dropboxManager.disconnect();
+      this.addLogEntry("Disconnected from Dropbox", "info");
+    }
+  }
+
+  async syncFromDropbox() {
+    if (!this.dropboxManager.isConnected) {
+      alert("Please connect to Dropbox first");
+      return;
+    }
+
+    try {
+      const statusDiv = document.getElementById("dropboxSyncStatus");
+      if (statusDiv) statusDiv.textContent = "Syncing...";
+
+      this.addLogEntry("Syncing workouts from Dropbox...", "info");
+
+      // Load workouts from Dropbox
+      const cloudWorkouts = await this.dropboxManager.loadWorkouts();
+
+      // Merge with local workouts (avoid duplicates by timestamp)
+      const existingTimestamps = new Set(
+        this.workoutHistory.map(w => (w.timestamp || w.endTime)?.getTime())
+      );
+
+      let newCount = 0;
+      for (const workout of cloudWorkouts) {
+        const timestamp = (workout.timestamp || workout.endTime)?.getTime();
+        if (!existingTimestamps.has(timestamp)) {
+          this.workoutHistory.unshift(workout);
+          newCount++;
+        }
+      }
+
+      // Sort by timestamp, newest first
+      this.workoutHistory.sort((a, b) => {
+        const timeA = (a.timestamp || a.endTime || new Date(0)).getTime();
+        const timeB = (b.timestamp || b.endTime || new Date(0)).getTime();
+        return timeB - timeA;
+      });
+
+      this.updateHistoryDisplay();
+
+      const message = newCount > 0
+        ? `Synced ${newCount} new workout(s) from Dropbox`
+        : "No new workouts found in Dropbox";
+
+      // Update last backup display to show sync time
+      if (cloudWorkouts.length > 0) {
+        localStorage.setItem("vitruvian.dropbox.lastBackup", new Date().toISOString());
+        this.updateLastBackupDisplay();
+      }
+
+      this.addLogEntry(message, "success");
+      if (statusDiv) {
+        statusDiv.textContent = message;
+        setTimeout(() => { if (statusDiv) statusDiv.textContent = ""; }, 5000);
+      }
+    } catch (error) {
+      this.addLogEntry(`Failed to sync from Dropbox: ${error.message}`, "error");
+      const statusDiv = document.getElementById("dropboxSyncStatus");
+      if (statusDiv) {
+        statusDiv.textContent = `Error: ${error.message}`;
+        setTimeout(() => { if (statusDiv) statusDiv.textContent = ""; }, 5000);
+      }
+    }
+  }
+
+  async exportAllToDropboxCSV() {
+    if (!this.dropboxManager.isConnected) {
+      alert("Please connect to Dropbox first");
+      return;
+    }
+
+    if (this.workoutHistory.length === 0) {
+      alert("No workouts to export");
+      return;
+    }
+
+    try {
+      const statusDiv = document.getElementById("dropboxSyncStatus");
+      if (statusDiv) statusDiv.textContent = "Exporting to CSV...";
+
+      await this.dropboxManager.exportAllWorkoutsCSV(this.workoutHistory, this.getUnitLabel());
+
+      this.addLogEntry(`Exported ${this.workoutHistory.length} workouts to CSV in Dropbox`, "success");
+      if (statusDiv) {
+        statusDiv.textContent = "Export complete!";
+        setTimeout(() => { if (statusDiv) statusDiv.textContent = ""; }, 5000);
+      }
+    } catch (error) {
+      this.addLogEntry(`Failed to export CSV: ${error.message}`, "error");
+      alert(`Failed to export CSV: ${error.message}`);
     }
   }
 
@@ -756,7 +940,7 @@ if (setLabel) setLabel.textContent = "";
     const endTime = new Date();
     this.currentWorkout.endTime = endTime;
 
-    this.addToWorkoutHistory({
+    const workout = {
       mode: this.currentWorkout.mode,
       weightKg: this.currentWorkout.weightKg,
       reps: this.workingReps,
@@ -765,13 +949,27 @@ if (setLabel) setLabel.textContent = "";
       warmupEndTime: this.currentWorkout.warmupEndTime,
       endTime,
 
-  setName: this.currentWorkout.setName || null,
-  setNumber: this.currentWorkout.setNumber ?? null,
-  setTotal: this.currentWorkout.setTotal ?? null,
-  itemType: this.currentWorkout.itemType || null,
+      setName: this.currentWorkout.setName || null,
+      setNumber: this.currentWorkout.setNumber ?? null,
+      setTotal: this.currentWorkout.setTotal ?? null,
+      itemType: this.currentWorkout.itemType || null,
+    };
 
+    this.addToWorkoutHistory(workout);
 
-    });
+    // Auto-save to Dropbox if connected
+    if (this.dropboxManager.isConnected) {
+      this.dropboxManager.saveWorkout(workout)
+        .then(() => {
+          // Store last backup timestamp
+          localStorage.setItem("vitruvian.dropbox.lastBackup", new Date().toISOString());
+          this.updateLastBackupDisplay();
+          this.addLogEntry("Workout backed up to Dropbox", "success");
+        })
+        .catch((error) => {
+          this.addLogEntry(`Failed to auto-save to Dropbox: ${error.message}`, "error");
+        });
+    }
 
     this.resetRepCountersToEmpty();
     this.addLogEntry("Workout completed and saved to history", "success");

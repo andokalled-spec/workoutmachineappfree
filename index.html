@@ -870,6 +870,101 @@
                         </div>
                     </div>
 
+                    <!-- Dropbox Cloud Backup Section -->
+                    <div class="section" id="dropboxSection">
+                        <h2>
+                            Cloud Backup
+                            <span id="dropboxStatusBadge" style="
+                                display: inline-block;
+                                padding: 3px 8px;
+                                border-radius: 12px;
+                                font-size: 0.65em;
+                                margin-left: 8px;
+                                background: #e0e0e0;
+                                color: #6c757d;
+                            ">Not Connected</span>
+                        </h2>
+
+                        <div id="dropboxNotConnected" style="display: block;">
+                            <div
+                                style="
+                                    font-size: 0.85em;
+                                    color: #6c757d;
+                                    line-height: 1.4;
+                                    margin-bottom: 15px;
+                                "
+                            >
+                                Connect your personal Dropbox account to automatically back up your workout history. Your data is stored in <strong>your</strong> Dropbox, and we have zero access to it.
+                            </div>
+
+                            <button onclick="app.connectDropbox()">
+                                Connect Dropbox
+                            </button>
+
+                            <div
+                                style="
+                                    font-size: 0.75em;
+                                    color: #6c757d;
+                                    margin-top: 10px;
+                                    line-height: 1.3;
+                                "
+                            >
+                                🔒 Privacy-first: Backups are saved to YOUR Dropbox account. We never have access to your data.
+                            </div>
+                        </div>
+
+                        <div id="dropboxConnected" style="display: none;">
+                            <div class="status connected" style="margin-bottom: 15px;">
+                                Connected to Dropbox
+                            </div>
+
+                            <div
+                                style="
+                                    font-size: 0.85em;
+                                    color: #6c757d;
+                                    line-height: 1.4;
+                                    margin-bottom: 10px;
+                                "
+                            >
+                                Your workouts are automatically saved to <code>/Apps/VitruvianWorkouts/workouts/</code> in your Dropbox.
+                            </div>
+
+                            <div id="dropboxLastBackup" style="
+                                font-size: 0.8em;
+                                color: #495057;
+                                margin-bottom: 15px;
+                                padding: 8px;
+                                background: #f8f9fa;
+                                border-radius: 4px;
+                            ">
+                                <!-- Last backup time will appear here -->
+                            </div>
+
+                            <div style="display: flex; flex-direction: column; gap: 10px;">
+                                <button onclick="app.syncFromDropbox()">
+                                    Sync from Dropbox
+                                </button>
+
+                                <button class="secondary" onclick="app.exportAllToDropboxCSV()">
+                                    Export All as CSV to Dropbox
+                                </button>
+
+                                <button class="secondary" onclick="app.disconnectDropbox()" style="background: #dc3545;">
+                                    Disconnect Dropbox
+                                </button>
+                            </div>
+
+                            <div id="dropboxSyncStatus" style="
+                                font-size: 0.8em;
+                                color: #6c757d;
+                                margin-top: 10px;
+                                font-style: italic;
+                            ">
+                                <!-- Sync status messages appear here -->
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Color Scheme Section -->
                     <div class="section hidden" id="colorSection">
                         <h2>Color Scheme</h2>
@@ -1299,11 +1394,15 @@
             </main>
         </div>
 
+        <!-- Dropbox SDK -->
+        <script src="https://unpkg.com/dropbox@10.34.0/dist/Dropbox-sdk.min.js"></script>
+
         <script src="https://leeoniya.github.io/uPlot/dist/uPlot.iife.js"></script>
         <script src="modes.js"></script>
         <script src="protocol.js"></script>
         <script src="device.js"></script>
         <script src="chart.js"></script>
+        <script src="dropbox.js"></script>
         <script src="app.js"></script>
     </body>
 </html>
