@@ -44,6 +44,14 @@ class VitruvianApp {
     this.planRestTimer = null;  // rest countdown handle
     this.planOnWorkoutComplete = null; // hook assigned while plan is running
 
+
+
+
+this.planPaused = false;            // true when user pressed STOP-to-REPLAY
+this.replayCursor = null;           // { index, set } to replay from the same set
+this._blockAdvanceOnce = false;     // suppress auto-advance exactly once
+
+
     // initialize plan UI dropdown from storage
     setTimeout(() => {
       this.populatePlanSelect();
@@ -59,6 +67,22 @@ class VitruvianApp {
       this.addLogEntry(message, type);
     };
   }
+
+
+updateStopReplayUI() {
+  const stopBtn = document.getElementById("stopBtn");
+  if (!stopBtn) return;
+  if (this.planPaused) {
+    stopBtn.textContent = "REPLAY";
+    stopBtn.style.background = "linear-gradient(135deg,#28a745 0%,#218838 100%)";
+    stopBtn.title = "Replay the paused set from its beginning";
+  } else {
+    stopBtn.textContent = "STOP";
+    stopBtn.style.background = "linear-gradient(135deg,#dc3545 0%,#c82333 100%)";
+    stopBtn.title = "Stop the current workout";
+  }
+}
+
 
   setupChart() {
     // Initialize chart and connect logging
@@ -376,6 +400,7 @@ class VitruvianApp {
       stopBtn.style.opacity = "1";
       stopBtn.title = "Stop the current workout";
     }
+ this.updateStopReplayUI();
   }
 
   updateConnectionStatus(connected) {
@@ -744,14 +769,13 @@ return `
   }
 
  completeWorkout() {
-
-const setLabel = document.getElementById("currentSetName");
-if (setLabel) setLabel.textContent = "";
+  const setLabel = document.getElementById("currentSetName");
+  if (setLabel) setLabel.textContent = "";
 
   if (this.currentWorkout) {
     // stop polling to avoid queue buildup
-    this.device.stopPropertyPolling();
-    this.device.stopMonitorPolling();
+    try { this.device.stopPropertyPolling(); } catch {}
+    try { this.device.stopMonitorPolling(); } catch {}
 
     const endTime = new Date();
     this.currentWorkout.endTime = endTime;
@@ -765,16 +789,21 @@ if (setLabel) setLabel.textContent = "";
       warmupEndTime: this.currentWorkout.warmupEndTime,
       endTime,
 
-  setName: this.currentWorkout.setName || null,
-  setNumber: this.currentWorkout.setNumber ?? null,
-  setTotal: this.currentWorkout.setTotal ?? null,
-  itemType: this.currentWorkout.itemType || null,
-
-
+      setName: this.currentWorkout.setName || null,
+      setNumber: this.currentWorkout.setNumber ?? null,
+      setTotal: this.currentWorkout.setTotal ?? null,
+      itemType: this.currentWorkout.itemType || null,
     });
 
     this.resetRepCountersToEmpty();
     this.addLogEntry("Workout completed and saved to history", "success");
+  }
+
+  // 👉 If we paused/jumped (STOP→REPLAY or PREV/NEXT), suppress a single auto-advance
+  if (this._blockAdvanceOnce) {
+    this._blockAdvanceOnce = false;
+    this.addLogEntry("Plan advance suppressed (manual stop/jump).", "info");
+    return; // do not call planOnWorkoutComplete()
   }
 
   // 👉 hand control back to the plan runner so it can show the rest overlay
@@ -1193,262 +1222,306 @@ if (setLabel) setLabel.textContent = "";
     }
   }
 
-  async startProgram() {
-    try {
-      const modeSelect = document.getElementById("mode");
-      const weightInput = document.getElementById("weight");
-      const repsInput = document.getElementById("reps");
-      const justLiftCheckbox = document.getElementById("justLiftCheckbox");
-      const progressionInput = document.getElementById("progression");
+async toggleStopReplay() {
+  // If we’re currently in REPLAY mode, pressing the button replays the saved cursor.
+  if (this.planPaused && this.replayCursor) {
+    this.addLogEntry("Replaying paused set…", "info");
+    this.planPaused = false;
+    this.updateStopReplayUI();
+    this.planActive = true; // ensure plan runner is on
+    this.planCursor = { ...this.replayCursor }; // resume same item/set
+    this._applyItemToUI?.(this.planItems[this.planCursor.index]); // hydrate UI
+    await this._runCurrentPlanBlock();
+    return;
+  }
 
-      const baseMode = parseInt(modeSelect.value);
-      const perCableDisplay = parseFloat(weightInput.value);
-      const isJustLift = justLiftCheckbox.checked;
-      const reps = isJustLift ? 0 : parseInt(repsInput.value);
-      const progressionDisplay = parseFloat(progressionInput.value);
+  // Otherwise: STOP the *current* set, keep plan/cursor, and flip to REPLAY mode.
+  if (this.planActive && this.planItems[this.planCursor.index]) {
+    // prevent plan auto-advance when completeWorkout() would normally fire
+    this._blockAdvanceOnce = true;
 
-      const perCableKg = this.convertDisplayToKg(perCableDisplay);
-      const progressionKg = this.convertDisplayToKg(progressionDisplay);
+    await this._terminateCurrentSetSilently();
 
-      // Validate inputs
-      if (
-        isNaN(perCableDisplay) ||
-        isNaN(perCableKg) ||
-        perCableKg < 0 ||
-        perCableKg > 100
-      ) {
-        alert(`Please enter a valid weight (${this.getWeightRangeText()})`);
-        return;
-      }
+    // remember where to replay from
+    this.replayCursor = { index: this.planCursor.index, set: this.planCursor.set };
+    this.planPaused = true;
+    this.updateStopReplayUI();
 
-      if (!isJustLift && (isNaN(reps) || reps < 1 || reps > 100)) {
-        alert("Please enter a valid number of reps (1-100)");
-        return;
-      }
-
-      if (
-        isNaN(progressionDisplay) ||
-        isNaN(progressionKg) ||
-        progressionKg < -3 ||
-        progressionKg > 3
-      ) {
-        alert(
-          `Please enter a valid progression (${this.getProgressionRangeText()})`,
-        );
-        return;
-      }
-
-      // Calculate effective weight (per_cable_kg + 10)
-      const effectiveKg = perCableKg + 10.0;
-      const effectiveDisplay = this.convertKgToDisplay(effectiveKg);
-
-      const params = {
-        mode: baseMode, // Not used directly, baseMode is used in protocol
-        baseMode: baseMode,
-        isJustLift: isJustLift,
-        reps: reps,
-        perCableKg: perCableKg,
-        perCableDisplay: this.convertKgToDisplay(perCableKg),
-        effectiveKg: effectiveKg,
-        effectiveDisplay: effectiveDisplay,
-        progressionKg: progressionKg,
-        progressionDisplay: this.convertKgToDisplay(progressionKg),
-        displayUnit: this.getUnitLabel(),
-        sequenceID: 0x0b,
-      };
-
-      // Set rep targets before starting
-      this.warmupTarget = 3; // Programs always use 3 warmup reps
-      this.targetReps = reps;
-      this.isJustLiftMode = isJustLift;
-      this.lastRepCounter = undefined;
-      this.lastTopCounter = undefined;
-
-      // Reset workout state and set current workout info
-      this.warmupReps = 0;
-      this.workingReps = 0;
-      const modeName = isJustLift
-        ? `Just Lift (${ProgramModeNames[baseMode]})`
-        : ProgramModeNames[baseMode];
-
-
-
-const inPlan = this.planActive && this.planItems[this.planCursor.index];
-const planItem = inPlan ? this.planItems[this.planCursor.index] : null;
-
-      this.currentWorkout = {
-        mode: modeName || "Program",
-        weightKg: perCableKg,
-        targetReps: reps,
-        startTime: new Date(),
-        warmupEndTime: null,
-        endTime: null,
-
-  // ⬇ NEW: plan metadata for history
-  setName: planItem?.name || null,
-  setNumber: inPlan ? this.planCursor.set : null,
-  setTotal: planItem?.sets ?? null,
-  itemType: planItem?.type || "exercise",
-
-      };
-      this.updateRepCounters();
-
-      // Show auto-stop timer if Just Lift mode
-      const autoStopTimer = document.getElementById("autoStopTimer");
-      if (autoStopTimer) {
-        autoStopTimer.style.display = isJustLift ? "block" : "none";
-      }
-
-      await this.device.startProgram(params);
-
-      // Set up monitor listener
-      this.device.addMonitorListener((sample) => {
-        this.updateLiveStats(sample);
-      });
-
-      // Set up rep listener
-      this.device.addRepListener((data) => {
-        this.handleRepNotification(data);
-      });
-
-      // Update stop button state
-      this.updateStopButtonState();
-
-      // Close sidebar on mobile after starting
-      this.closeSidebar();
-} catch (error) {
-      console.error("Start program error:", error);
-      this.addLogEntry(`Failed to start program: ${error.message}`, "error");
-      alert(`Failed to start program: ${error.message}`);
+    // Mark paused in the tiny label
+    const setLabel = document.getElementById("currentSetName");
+    if (setLabel) {
+      const nm = this.planItems[this.planCursor.index]?.name || "Set";
+      setLabel.textContent = `${nm} (paused)`;
     }
 
-// === Update current set name under "Live Workout Data" ===
-const setLabel = document.getElementById("currentSetName");
-if (setLabel) {
-  // If a plan is active, show the current plan item's name; otherwise clear
-  if (this.planActive && this.planItems[this.planCursor.index]) {
-    const planItem = this.planItems[this.planCursor.index];
-    setLabel.textContent = planItem.name || "Unnamed Set";
+    this.addLogEntry("Set paused — press REPLAY to restart this set from the beginning.", "success");
   } else {
-    setLabel.textContent = "Live Set";
+    // No plan running: fall back to original stop behavior
+    await this.stopWorkout();
   }
 }
 
-  }
 
-  async startEcho() {
-    try {
-      const levelSelect = document.getElementById("echoLevel");
-      const eccentricInput = document.getElementById("eccentric");
-      const targetInput = document.getElementById("targetReps");
-      const echoJustLiftCheckbox = document.getElementById(
-        "echoJustLiftCheckbox",
-      );
+async _terminateCurrentSetSilently() {
+  try {
+    await this.device.sendStopCommand();
+  } catch {}
+  try { this.device.stopPropertyPolling(); } catch {}
+  try { this.device.stopMonitorPolling(); } catch {}
 
-      const level = parseInt(levelSelect.value) - 1; // Convert to 0-indexed
-      const eccentricPct = parseInt(eccentricInput.value);
-      const warmupReps = 3; // Hardcoded warmup reps for Echo mode
-      const isJustLift = echoJustLiftCheckbox.checked;
-      const targetReps = isJustLift ? 0 : parseInt(targetInput.value);
+  // Don’t save to history; just reset runtime counters/state
+  this.resetRepCountersToEmpty();
+  this.currentWorkout = null;
+  this.addLogEntry("Set terminated (no history entry).", "info");
+}
 
-      // Validate inputs
-      if (isNaN(eccentricPct) || eccentricPct < 0 || eccentricPct > 150) {
-        alert("Please enter a valid eccentric percentage (0-150)");
-        return;
-      }
 
-      if (
-        !isJustLift &&
-        (isNaN(targetReps) || targetReps < 0 || targetReps > 30)
-      ) {
-        alert("Please enter valid target reps (0-30)");
-        return;
-      }
+async startProgram() {
+  try {
+    const modeSelect = document.getElementById("mode");
+    const weightInput = document.getElementById("weight");
+    const repsInput = document.getElementById("reps");
+    const justLiftCheckbox = document.getElementById("justLiftCheckbox");
+    const progressionInput = document.getElementById("progression");
 
-      const params = {
-        level: level,
-        eccentricPct: eccentricPct,
-        warmupReps: warmupReps,
-        targetReps: targetReps,
-        isJustLift: isJustLift,
-        sequenceID: 0x01,
-      };
+    const baseMode = parseInt(modeSelect.value);
+    const perCableDisplay = parseFloat(weightInput.value);
+    const isJustLift = justLiftCheckbox.checked;
+    const reps = isJustLift ? 0 : parseInt(repsInput.value);
+    const progressionDisplay = parseFloat(progressionInput.value);
 
-      // Set rep targets before starting
-      this.warmupTarget = 3; // Always 3 for Echo mode
-      this.targetReps = targetReps;
-      this.isJustLiftMode = isJustLift;
-      this.lastRepCounter = undefined;
-      this.lastTopCounter = undefined;
+    const perCableKg = this.convertDisplayToKg(perCableDisplay);
+    const progressionKg = this.convertDisplayToKg(progressionDisplay);
 
-      // Reset workout state and set current workout info
-      this.warmupReps = 0;
-      this.workingReps = 0;
-      const modeName = isJustLift
-        ? `Just Lift Echo ${EchoLevelNames[level]}`
-        : `Echo ${EchoLevelNames[level]}`;
-      
-const inPlan = this.planActive && this.planItems[this.planCursor.index];
-const planItem = inPlan ? this.planItems[this.planCursor.index] : null;
-
-this.currentWorkout = {
-        mode: modeName,
-        weightKg: 0, // Echo mode doesn't have fixed weight
-        targetReps: targetReps,
-        startTime: new Date(),
-        warmupEndTime: null,
-        endTime: null,
-
-  setName: planItem?.name || null,
-  setNumber: inPlan ? this.planCursor.set : null,
-  setTotal: planItem?.sets ?? null,
-  itemType: planItem?.type || "echo",
-
-      };
-      this.updateRepCounters();
-
-      // Show auto-stop timer if Just Lift mode
-      const autoStopTimer = document.getElementById("autoStopTimer");
-      if (autoStopTimer) {
-        autoStopTimer.style.display = isJustLift ? "block" : "none";
-      }
-
-      await this.device.startEcho(params);
-
-      // Set up monitor listener
-      this.device.addMonitorListener((sample) => {
-        this.updateLiveStats(sample);
-      });
-
-      // Set up rep listener
-      this.device.addRepListener((data) => {
-        this.handleRepNotification(data);
-      });
-
-      // Update stop button state
-      this.updateStopButtonState();
-
-      // Close sidebar on mobile after starting
-      this.closeSidebar();
-    } catch (error) {
-      console.error("Start Echo error:", error);
-      this.addLogEntry(`Failed to start Echo mode: ${error.message}`, "error");
-      alert(`Failed to start Echo mode: ${error.message}`);
+    // Validate inputs
+    if (
+      isNaN(perCableDisplay) ||
+      isNaN(perCableKg) ||
+      perCableKg < 0 ||
+      perCableKg > 100
+    ) {
+      alert(`Please enter a valid weight (${this.getWeightRangeText()})`);
+      return;
     }
 
-// === Update current set name under "Live Workout Data" ===
-const setLabel = document.getElementById("currentSetName");
-if (setLabel) {
-  // If a plan is active, show the current plan item's name; otherwise clear
-  if (this.planActive && this.planItems[this.planCursor.index]) {
-    const planItem = this.planItems[this.planCursor.index];
-    setLabel.textContent = planItem.name || "Unnamed Set";
-  } else {
-    setLabel.textContent = "Live Set";
+    if (!isJustLift && (isNaN(reps) || reps < 1 || reps > 100)) {
+      alert("Please enter a valid number of reps (1-100)");
+      return;
+    }
+
+    if (
+      isNaN(progressionDisplay) ||
+      isNaN(progressionKg) ||
+      progressionKg < -3 ||
+      progressionKg > 3
+    ) {
+      alert(`Please enter a valid progression (${this.getProgressionRangeText()})`);
+      return;
+    }
+
+    // Calculate effective weight (per_cable_kg + 10)
+    const effectiveKg = perCableKg + 10.0;
+    const effectiveDisplay = this.convertKgToDisplay(effectiveKg);
+
+    const params = {
+      mode: baseMode,
+      baseMode: baseMode,
+      isJustLift: isJustLift,
+      reps: reps,
+      perCableKg: perCableKg,
+      perCableDisplay: this.convertKgToDisplay(perCableKg),
+      effectiveKg: effectiveKg,
+      effectiveDisplay: effectiveDisplay,
+      progressionKg: progressionKg,
+      progressionDisplay: this.convertKgToDisplay(progressionKg),
+      displayUnit: this.getUnitLabel(),
+      sequenceID: 0x0b,
+    };
+
+    // Set rep targets before starting
+    this.warmupTarget = 3; // Programs always use 3 warmup reps
+    this.targetReps = reps;
+    this.isJustLiftMode = isJustLift;
+    this.lastRepCounter = undefined;
+    this.lastTopCounter = undefined;
+
+    // Reset workout state and set current workout info
+    this.warmupReps = 0;
+    this.workingReps = 0;
+    const modeName = isJustLift
+      ? `Just Lift (${ProgramModeNames[baseMode]})`
+      : ProgramModeNames[baseMode];
+
+    const inPlan = this.planActive && this.planItems && this.planItems[this.planCursor?.index];
+    const planItem = inPlan ? this.planItems[this.planCursor.index] : null;
+
+    this.currentWorkout = {
+      mode: modeName || "Program",
+      weightKg: perCableKg,
+      targetReps: reps,
+      startTime: new Date(),
+      warmupEndTime: null,
+      endTime: null,
+
+      // ⬇ plan metadata for history
+      setName: planItem?.name || null,
+      setNumber: inPlan ? this.planCursor.set : null,
+      setTotal: planItem?.sets ?? null,
+      itemType: planItem?.type || "exercise",
+    };
+    this.updateRepCounters();
+
+    // Show auto-stop timer if Just Lift mode
+    const autoStopTimer = document.getElementById("autoStopTimer");
+    if (autoStopTimer) {
+      autoStopTimer.style.display = isJustLift ? "block" : "none";
+    }
+
+    await this.device.startProgram(params);
+
+    // Monitor + rep listeners
+    this.device.addMonitorListener((sample) => {
+      this.updateLiveStats(sample);
+    });
+    this.device.addRepListener((data) => {
+      this.handleRepNotification(data);
+    });
+
+    // ⬇ STOP↔REPLAY integration: clear pause state and sync button UI
+    this.planPaused = false;        // ensure button shows STOP, not REPLAY
+    this.replayCursor = null;       // no replay target when a fresh program starts
+    this._blockAdvanceOnce = false; // avoid leftover suppression
+    this.updateStopReplayUI?.();    // text/color for STOP/REPLAY
+    this.updateStopButtonState?.(); // opacity/tooltip
+
+    // Close sidebar on mobile after starting
+    this.closeSidebar();
+
+  } catch (error) {
+    console.error("Start program error:", error);
+    this.addLogEntry(`Failed to start program: ${error.message}`, "error");
+    alert(`Failed to start program: ${error.message}`);
+  }
+
+  // === Update current set name under "Live Workout Data" ===
+  const setLabel = document.getElementById("currentSetName");
+  if (setLabel) {
+    if (this.planActive && this.planItems && this.planItems[this.planCursor?.index]) {
+      const planItem = this.planItems[this.planCursor.index];
+      setLabel.textContent = planItem.name || "Unnamed Set";
+    } else {
+      setLabel.textContent = "Live Set";
+    }
   }
 }
 
+async startEcho() {
+  try {
+    const levelSelect = document.getElementById("echoLevel");
+    const eccentricInput = document.getElementById("eccentric");
+    const targetInput = document.getElementById("targetReps");
+    const echoJustLiftCheckbox = document.getElementById("echoJustLiftCheckbox");
+
+    const level = parseInt(levelSelect.value) - 1; // Convert to 0-indexed
+    const eccentricPct = parseInt(eccentricInput.value);
+    const warmupReps = 3; // Hardcoded warmup reps for Echo mode
+    const isJustLift = echoJustLiftCheckbox.checked;
+    const targetReps = isJustLift ? 0 : parseInt(targetInput.value);
+
+    // Validate inputs
+    if (isNaN(eccentricPct) || eccentricPct < 0 || eccentricPct > 150) {
+      alert("Please enter a valid eccentric percentage (0-150)");
+      return;
+    }
+    if (!isJustLift && (isNaN(targetReps) || targetReps < 0 || targetReps > 30)) {
+      alert("Please enter valid target reps (0-30)");
+      return;
+    }
+
+    const params = {
+      level: level,
+      eccentricPct: eccentricPct,
+      warmupReps: warmupReps,
+      targetReps: targetReps,
+      isJustLift: isJustLift,
+      sequenceID: 0x01,
+    };
+
+    // Rep targets before starting
+    this.warmupTarget = 3; // Always 3 for Echo mode
+    this.targetReps = targetReps;
+    this.isJustLiftMode = isJustLift;
+    this.lastRepCounter = undefined;
+    this.lastTopCounter = undefined;
+
+    // Reset workout state and set current workout info
+    this.warmupReps = 0;
+    this.workingReps = 0;
+    const modeName = isJustLift
+      ? `Just Lift Echo ${EchoLevelNames[level]}`
+      : `Echo ${EchoLevelNames[level]}`;
+
+    const inPlan = this.planActive && this.planItems && this.planItems[this.planCursor?.index];
+    const planItem = inPlan ? this.planItems[this.planCursor.index] : null;
+
+    this.currentWorkout = {
+      mode: modeName,
+      weightKg: 0, // Echo mode doesn't have fixed weight
+      targetReps: targetReps,
+      startTime: new Date(),
+      warmupEndTime: null,
+      endTime: null,
+
+      // plan metadata for history
+      setName: planItem?.name || null,
+      setNumber: inPlan ? this.planCursor.set : null,
+      setTotal: planItem?.sets ?? null,
+      itemType: planItem?.type || "echo",
+    };
+    this.updateRepCounters();
+
+    // Show auto-stop timer if Just Lift mode
+    const autoStopTimer = document.getElementById("autoStopTimer");
+    if (autoStopTimer) {
+      autoStopTimer.style.display = isJustLift ? "block" : "none";
+    }
+
+    await this.device.startEcho(params);
+
+    // Monitor + rep listeners
+    this.device.addMonitorListener((sample) => {
+      this.updateLiveStats(sample);
+    });
+    this.device.addRepListener((data) => {
+      this.handleRepNotification(data);
+    });
+
+    // ⬇ STOP↔REPLAY integration: ensure button shows STOP for a fresh set
+    this.planPaused = false;
+    this.replayCursor = null;
+    this._blockAdvanceOnce = false;
+    this.updateStopReplayUI?.();    // label/color (STOP/REPLAY)
+    this.updateStopButtonState?.(); // opacity/tooltip
+
+    // Close sidebar on mobile after starting
+    this.closeSidebar();
+  } catch (error) {
+    console.error("Start Echo error:", error);
+    this.addLogEntry(`Failed to start Echo mode: ${error.message}`, "error");
+    alert(`Failed to start Echo mode: ${error.message}`);
   }
+
+  // === Update current set name under "Live Workout Data" ===
+  const setLabel = document.getElementById("currentSetName");
+  if (setLabel) {
+    if (this.planActive && this.planItems && this.planItems[this.planCursor?.index]) {
+      const planItem = this.planItems[this.planCursor.index];
+      setLabel.textContent = planItem.name || "Unnamed Set";
+    } else {
+      setLabel.textContent = "Live Set";
+    }
+  }
+}
 
   loadColorPreset() {
     const presetSelect = document.getElementById("colorPreset");
@@ -1815,34 +1888,39 @@ _applyItemToUI(item){
     this.planItems[index].progressionKg = Math.max(-3, Math.min(3, kg));
   }
 
-startPlan(){
- 
- // ✅ 1. Check device connection first
+startPlan() {
+  // ✅ 1) Require device connection
   if (!this.device || !this.device.isConnected) {
-    // Add message in the console log panel
     this.addLogEntry("⚠️ Please connect your Vitruvian device before starting a plan.", "error");
-    // Optional popup for visibility
     alert("Please connect your Vitruvian device before starting a plan.");
-    return; // Stop execution
+    return;
   }
 
- if (!this.planItems || this.planItems.length === 0){
+  // ✅ 2) Require plan items
+  if (!this.planItems || this.planItems.length === 0) {
     this.addLogEntry("No items in plan.", "warning");
     return;
   }
 
+  // ✅ 3) Initialize plan runner
   this.planActive = true;
   this.planCursor = { index: 0, set: 1 };
   this.planOnWorkoutComplete = () => this._planAdvance();
   this.addLogEntry(`Starting plan with ${this.planItems.length} item(s)`, "success");
 
-  // ⬇️ Prefill Program/Echo UI + Stop-at-Top & Just Lift for the first set
+  // ✅ 4) Prefill UI for first set
   this._applyItemToUI(this.planItems[0]);
 
-  // If you auto-start, keep this; otherwise, remove the next line to let user review first:
+  // ✅ 5) Clear STOP→REPLAY pause state and refresh button UI
+  this.planPaused = false;          // <<< important
+  this.replayCursor = null;         // <<< important
+  this._blockAdvanceOnce = false;   // ensures no leftover suppression
+  this.updateStopReplayUI?.();      // label/color (STOP/REPLAY)
+  this.updateStopButtonState?.();   // opacity + tooltip
+
+  // ✅ 6) Auto-start first set (remove if you prefer manual start)
   this._runCurrentPlanBlock();
 }
-
 
 // Run the currently selected plan block (exercise or echo)
 // Uses the visible UI and calls startProgram()/startEcho() just like pressing the buttons.
@@ -1883,6 +1961,71 @@ async _runCurrentPlanBlock(){
     this._planFinish?.();
   }
 }
+
+
+
+// Compute previous cursor within the plan
+_prevCursor(cur) {
+  const i = cur.index, s = cur.set;
+  const item = this.planItems[i];
+  if (!item) return cur;
+
+  if (s > 1) return { index: i, set: s - 1 };
+
+  // move to previous item’s last set
+  if (i > 0) {
+    const prevItem = this.planItems[i - 1];
+    return { index: i - 1, set: Math.max(1, prevItem?.sets || 1) };
+  }
+  return cur; // already at first set of first item
+}
+
+// Compute next cursor within the plan
+_nextCursor(cur) {
+  const i = cur.index, s = cur.set;
+  const item = this.planItems[i];
+  if (!item) return cur;
+
+  if (s < (item.sets || 1)) return { index: i, set: s + 1 };
+
+  // move to next item first set
+  if (i + 1 < this.planItems.length) {
+    return { index: i + 1, set: 1 };
+  }
+  return cur; // already at last set of last item
+}
+
+// Jump and start immediately
+async _jumpToCursor(cursor) {
+  this.planCursor = { ...cursor };
+  this.planPaused = false;
+  this.updateStopReplayUI();
+  this.planActive = true;
+  this._applyItemToUI?.(this.planItems[this.planCursor.index]);
+  await this._runCurrentPlanBlock();
+}
+
+async prevSet() {
+  if (!this.planItems.length) return;
+  const target = this._prevCursor(this.planCursor);
+  if (this.currentWorkout) {
+    this._blockAdvanceOnce = true;
+    await this._terminateCurrentSetSilently();
+  }
+  await this._jumpToCursor(target);
+}
+
+async nextSet() {
+  if (!this.planItems.length) return;
+  const target = this._nextCursor(this.planCursor);
+  if (this.currentWorkout) {
+    this._blockAdvanceOnce = true;
+    await this._terminateCurrentSetSilently();
+  }
+  await this._jumpToCursor(target);
+}
+
+
 
 // Decide next step after a block finishes: next set of same item, or next item.
 // Schedules rest and then calls _runCurrentPlanBlock() again.
