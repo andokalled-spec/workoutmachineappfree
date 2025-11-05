@@ -1064,7 +1064,6 @@ if (setLabel) setLabel.textContent = "";
             "success",
           );
           this.stopWorkout(); // Must be explicitly stopped as the machine thinks the set isn't finished until the bottom of the final rep.
-          this.completeWorkout();
         }
       }
     }
@@ -1519,6 +1518,40 @@ if (setLabel) {
   }
 
 
+
+// --- Audio helpers (countdown / tiny beeps) ---
+_initAudio() {
+  if (this._audioCtx) return;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) {
+    this.addLogEntry("WebAudio not supported; beeps disabled.", "warning");
+    return;
+  }
+  this._audioCtx = new AudioCtx();
+}
+
+// frequency (Hz), duration (ms), volume (0..1)
+_beep(f = 880, ms = 120, vol = 0.2) {
+  if (!this._audioCtx) this._initAudio();
+  if (!this._audioCtx) return;
+
+  const ctx = this._audioCtx;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.value = f;
+  gain.gain.setValueAtTime(vol, ctx.currentTime);
+
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + ms / 1000);
+}
+
+
+
+
+
 // Apply a plan item to the visible sidebar UI (Program or Echo)
 // Also sets the global Stop-at-Top checkbox to match the item's setting.
 _applyItemToUI(item){
@@ -1930,6 +1963,7 @@ _beginRest(totalSec, onDone, labelText = "Next set", nextHtml = "", nextItemOrNa
   const nextDiv   = document.getElementById("restNext");
   const addBtn    = document.getElementById("restAddBtn");
   const skipBtn   = document.getElementById("restSkipBtn");
+  const pauseBtn  = document.getElementById("restPauseBtn");           // NEW
   const inlineHud = document.getElementById("planRestInline");
   const setNameEl = document.getElementById("restSetName");
 
@@ -1959,7 +1993,14 @@ _beginRest(totalSec, onDone, labelText = "Next set", nextHtml = "", nextItemOrNa
   let rafId = null;
   let endT = performance.now() + remaining * 1000;
 
-  const closeOverlay = () => { // ← NEW helper to clear name as well
+  // NEW: track pause delta so clock truly freezes while paused
+  let pauseStarted = 0;
+
+  // NEW: countdown beep guard + skip flag
+  let lastAnnounced = remaining;
+  let skipped = false;
+
+  const closeOverlay = () => {
     overlay.classList.add("hidden");
     if (inlineHud) inlineHud.textContent = "";
     if (setNameEl) setNameEl.textContent = "";
@@ -1967,8 +2008,10 @@ _beginRest(totalSec, onDone, labelText = "Next set", nextHtml = "", nextItemOrNa
 
   const tick = (t) => {
     if (paused) { rafId = requestAnimationFrame(tick); return; }
+
     const leftMs = Math.max(0, endT - t);
-    remaining = Math.ceil(leftMs / 1000);
+    const newRemaining = Math.ceil(leftMs / 1000);
+    remaining = newRemaining;
 
     // ring
     const ratio = Math.min(1, Math.max(0, leftMs / (totalSec * 1000)));
@@ -1979,15 +2022,31 @@ _beginRest(totalSec, onDone, labelText = "Next set", nextHtml = "", nextItemOrNa
     timeText.textContent = String(remaining);
     if (inlineHud) inlineHud.textContent = `Rest: ${remaining}s`;
 
+    // NEW: beep at 3, 2, 1 (only once per second)
+    if (remaining !== lastAnnounced) {
+      if (remaining === 3 || remaining === 2 || remaining === 1) {
+        // slightly descending tone for fun
+        const freq = remaining === 3 ? 880 : remaining === 2 ? 760 : 640;
+        this._beep(freq, 120, 0.25);
+      }
+      lastAnnounced = remaining;
+    }
+
     if (leftMs <= 0) {
       // done
       cancelAnimationFrame(rafId);
-      overlay.classList.add("hidden");
-      if (inlineHud) inlineHud.textContent = "";
+      closeOverlay();
+
+      // NEW: tiny “time’s up” beep if NOT skipped
+      if (!skipped) {
+        this._beep(1200, 80, 0.18); // short + a tad higher
+      }
+
       this.addLogEntry("Rest finished → starting next block", "success");
       onDone && onDone();
       return;
     }
+
     rafId = requestAnimationFrame(tick);
   };
 
@@ -1997,22 +2056,41 @@ _beginRest(totalSec, onDone, labelText = "Next set", nextHtml = "", nextItemOrNa
     endT += addMs;
     this.addLogEntry("+30s added to rest", "info");
   };
+
   const skip = () => {
     this.addLogEntry("Rest skipped", "info");
+    skipped = true;                        // NEW
     cancelAnimationFrame(rafId);
-    overlay.classList.add("hidden");
-    if (inlineHud) inlineHud.textContent = "";
+    closeOverlay();
     onDone && onDone();
+  };
+
+  const togglePause = () => {              // NEW
+    paused = !paused;
+    if (paused) {
+      pauseStarted = performance.now();
+      if (pauseBtn) pauseBtn.textContent = "Resume";
+      this.addLogEntry("Rest paused", "info");
+    } else {
+      // extend endT by the time we were paused
+      const pausedMs = Math.max(0, performance.now() - pauseStarted);
+      endT += pausedMs;
+      if (pauseBtn) pauseBtn.textContent = "Pause";
+      this.addLogEntry("Rest resumed", "info");
+    }
   };
 
   addBtn.onclick = add30;
   skipBtn.onclick = skip;
+  if (pauseBtn) pauseBtn.onclick = togglePause;  // NEW
 
   // start loop
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
-}
 
+  // NEW: prime AudioContext on user gesture (safe no-op if already running)
+  this._initAudio();
+}
 
 
   /* =========================

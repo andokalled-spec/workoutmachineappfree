@@ -849,12 +849,7 @@
 
                         <div class="form-group">
                             <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-                                <input
-                                    type="checkbox"
-                                    id="stopAtTopCheckbox"
-                                    onchange="app.toggleStopAtTop()"
-                                    style="width: auto; cursor: pointer;"
-                                />
+                               
                                 <span>Stop at top of final rep</span>
                             </label>
                         </div>
@@ -1270,10 +1265,11 @@
 
     <div id="restNext" class="rest-next"><!-- next block summary --></div>
 
-    <div class="rest-actions">
-      <button id="restAddBtn"  class="secondary">+30 sec</button>
-      <button id="restSkipBtn" class="primary">Skip</button>
-    </div>
+<div class="rest-actions">
+  <button id="restPauseBtn" class="secondary">Pause</button>   <!-- NEW -->
+  <button id="restAddBtn"  class="secondary">+30 sec</button>
+  <button id="restSkipBtn" class="primary">Skip</button>
+</div>
   </div>
 </div>
 
