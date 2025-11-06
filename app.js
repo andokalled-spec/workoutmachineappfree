@@ -2346,8 +2346,8 @@ _beginRest(totalSec, onDone, labelText = "Next set", nextHtml = "", nextItemOrNa
   }
 }
 
-// Create global app instance
-const app = new VitruvianApp();
+// Create global app instance(expose to inline handlers in index.html)
+window.app = new VitruvianApp();
 
 // Log startup message
 app.addLogEntry("Vitruvian Web Control Ready", "success");
