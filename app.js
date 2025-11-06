@@ -1235,8 +1235,13 @@ async toggleStopReplay() {
     return;
   }
 
-  // Otherwise: STOP the *current* set, keep plan/cursor, and flip to REPLAY mode.
-  if (this.planActive && this.planItems[this.planCursor.index]) {
+ if (!this.planActive || !this.planItems.length) {
+   // create synthetic plan context so REPLAY works after STOP
+   this.planItems = [ this.makeExerciseRow() ];
+   this.planCursor = { index: 0, set: 1 };
+   this.planActive = true;
+   this._applyItemToUI?.(this.planItems[0]);
+ }
     // prevent plan auto-advance when completeWorkout() would normally fire
     this._blockAdvanceOnce = true;
 
@@ -2006,7 +2011,14 @@ async _jumpToCursor(cursor) {
 }
 
 async prevSet() {
-  if (!this.planItems.length) return;
+  if (!this.planItems.length) {
+    // Build a 1-item synthetic plan from current UI so controls work
+    this.planItems = [ this.makeExerciseRow() ];
+    // Fill from visible sidebar (mode/weight/reps/justLift/progression)
+    this._applyItemToUI?.(this.planItems[0]);
+    this.planActive = true;
+    this.planCursor = { index: 0, set: 1 };
+  }
   const target = this._prevCursor(this.planCursor);
   if (this.currentWorkout) {
     this._blockAdvanceOnce = true;
@@ -2016,7 +2028,12 @@ async prevSet() {
 }
 
 async nextSet() {
-  if (!this.planItems.length) return;
+  if (!this.planItems.length) {
+    this.planItems = [ this.makeExerciseRow() ];
+    this._applyItemToUI?.(this.planItems[0]);
+    this.planActive = true;
+    this.planCursor = { index: 0, set: 1 };
+  }
   const target = this._nextCursor(this.planCursor);
   if (this.currentWorkout) {
     this._blockAdvanceOnce = true;
